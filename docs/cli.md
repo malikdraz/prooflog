@@ -25,7 +25,7 @@ The current config stores:
 - Codex root
 - redaction defaults
 
-`prooflog ingest --codex` discovers local Codex `.jsonl` files and records file metadata in SQLite.
+`prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, and stores non-empty raw JSONL lines in SQLite.
 
 `prooflog proof --since main` is still an explicit placeholder. It does not inspect git state or produce proof reports yet.
 
@@ -57,7 +57,7 @@ $HOME/.codex
 
 `prooflog doctor` will later add deeper parser diagnostics and richer git edge-case handling.
 
-`prooflog ingest --codex` will later store raw JSONL event lines after discovery.
+`prooflog ingest --codex` will later derive sessions, messages, commands, approvals, file changes, and proof facts from stored raw lines.
 
 `prooflog proof --since main` will produce the core proof report.
 
@@ -73,7 +73,7 @@ These contracts are covered by integration tests so future implementations keep 
 
 ## SQLite Schema
 
-The initialized DB records migration version `1` and creates these MVP tables:
+The initialized DB records migration version `2` and creates these MVP tables:
 
 - `schema_migrations`
 - `codex_files`
@@ -91,7 +91,7 @@ It also creates these FTS5 tables:
 - `messages_fts`
 - `command_output_fts`
 
-The schema is raw-first. Later parser and ingestion work will populate it.
+The schema is raw-first. Current ingest populates `codex_files` and `raw_events`; later parser work will populate the derived tables.
 
 ## Codex Discovery
 
@@ -104,7 +104,25 @@ For each discovered file, it records:
 - modified time
 - SHA-256 hash
 
-Repeated ingest skips unchanged files and updates changed file metadata in place. Symlinked directories are skipped to avoid loops. This command does not store raw JSONL lines yet.
+Repeated ingest skips unchanged file metadata and updates changed file metadata in place. Symlinked directories are skipped to avoid loops.
+
+## Raw Event Storage
+
+For each discovered file, `prooflog ingest --codex` reads JSONL content line-by-line and stores one `raw_events` row for each non-empty physical line.
+
+Each raw event row records:
+
+- source file id
+- line number
+- raw line text without the line ending
+- line SHA-256 hash
+- event type when a known top-level string field is present
+- event time when a known top-level string field is present
+- parse error when the line is malformed JSON
+
+Malformed JSON lines do not abort ingest. Unknown valid JSON shapes are preserved with NULL derived metadata. Empty lines are skipped and counted in ingest output.
+
+Current ingest output includes file discovery counts, raw event stored/skipped counts, malformed-line count, and grouped warnings. Raw event FTS indexing and derived parser extraction are planned follow-up work.
 
 ## Permission Warnings
 

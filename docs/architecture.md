@@ -20,7 +20,7 @@ Raw events are the source of truth. Derived tables are disposable.
    - mtime and sha256 based incremental ingestion
    - symlinked directories skipped to avoid loops
 4. Raw ingestion
-   - stores every line
+   - stores every non-empty line
    - records malformed lines
    - preserves unknown event shapes
 5. Derived extraction
@@ -51,7 +51,7 @@ Raw events are the source of truth. Derived tables are disposable.
 
 ## Data Model Notes
 
-The current MVP schema initializes these tables. `codex_files` is populated by discovery; the remaining tables are populated by later ingestion and extraction work.
+The current MVP schema initializes these tables. `codex_files` is populated by discovery, and `raw_events` is populated by raw ingestion. The derived tables are populated by later extraction work.
 
 - `codex_files`
 - `sessions`
@@ -69,4 +69,4 @@ The current MVP schema also initializes these FTS5 tables:
 - `messages_fts`
 - `command_output_fts`
 
-These are planning references, not implemented schema.
+The FTS tables are initialized but not populated by ingest yet.

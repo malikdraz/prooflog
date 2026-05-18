@@ -1,7 +1,9 @@
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
-    env, fs,
+    env,
+    fs::{self, File},
+    io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
 };
@@ -10,6 +12,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tracing::debug;
 use tracing_subscriber::EnvFilter;
@@ -106,6 +109,7 @@ fn ingest_codex(args: IngestArgs) -> Result<()> {
         .with_overrides(args.db, args.codex_root);
     let mut conn = open_existing_database(&config.db_path)
         .with_context(|| "run `prooflog init` before ingesting Codex history")?;
+    apply_schema(&conn, &config.db_path)?;
     let summary = discover_and_record_codex_files(&mut conn, &config.codex_root)?;
 
     println!("Codex ingest:");
@@ -113,6 +117,9 @@ fn ingest_codex(args: IngestArgs) -> Result<()> {
     println!("  files discovered: {}", summary.discovered);
     println!("  files recorded: {}", summary.recorded);
     println!("  files skipped: {}", summary.skipped);
+    println!("  raw events stored: {}", summary.raw_events_stored);
+    println!("  raw events skipped: {}", summary.raw_events_skipped);
+    println!("  malformed lines: {}", summary.malformed_lines);
     println!("  warnings: {}", summary.warnings.len());
     for warning in summary.warnings {
         println!("  warning: {warning}");
@@ -208,6 +215,9 @@ struct IngestSummary {
     discovered: usize,
     recorded: usize,
     skipped: usize,
+    raw_events_stored: usize,
+    raw_events_skipped: usize,
+    malformed_lines: usize,
     warnings: Vec<String>,
 }
 
@@ -217,6 +227,22 @@ struct DiscoveredCodexFile {
     size_bytes: u64,
     modified_at: String,
     sha256: String,
+}
+
+#[derive(Debug)]
+struct RecordedCodexFile {
+    id: i64,
+    changed: bool,
+}
+
+#[derive(Debug)]
+struct RawEventLine {
+    line_number: i64,
+    raw_json: String,
+    line_sha256: String,
+    event_type: Option<String>,
+    event_time: Option<String>,
+    parse_error: Option<String>,
 }
 
 fn discover_and_record_codex_files(conn: &mut Connection, root: &Path) -> Result<IngestSummary> {
@@ -242,11 +268,13 @@ fn discover_and_record_codex_files(conn: &mut Connection, root: &Path) -> Result
         .transaction()
         .context("failed to record discovered Codex files")?;
     for file in files {
-        if record_codex_file(&tx, &file)? {
+        let recorded_file = record_codex_file(&tx, &file)?;
+        if recorded_file.changed {
             summary.recorded += 1;
         } else {
             summary.skipped += 1;
         }
+        record_raw_events(&tx, recorded_file.id, &file.path, &mut summary)?;
     }
     tx.commit()
         .context("failed to record discovered Codex files")?;
@@ -318,18 +346,14 @@ fn discover_jsonl_files(
 fn discover_jsonl_file(path: &Path) -> Result<DiscoveredCodexFile, String> {
     let metadata = fs::metadata(path)
         .map_err(|error| format!("could not read metadata for {}: {error}", path.display()))?;
-    let bytes =
-        fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let sha256 = hash_file_sha256(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
     let modified_at = metadata
         .modified()
         .ok()
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|duration| duration.as_secs().to_string())
         .unwrap_or_else(|| "unknown".to_string());
-    let sha256 = Sha256::digest(&bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
 
     Ok(DiscoveredCodexFile {
         path: path.to_path_buf(),
@@ -339,19 +363,35 @@ fn discover_jsonl_file(path: &Path) -> Result<DiscoveredCodexFile, String> {
     })
 }
 
-fn record_codex_file(conn: &Connection, file: &DiscoveredCodexFile) -> Result<bool> {
+fn hash_file_sha256(path: &Path) -> std::io::Result<String> {
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0; 8192];
+    loop {
+        let bytes_read = file.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
+    Ok(hex_digest(hasher.finalize().as_slice()))
+}
+
+fn record_codex_file(conn: &Connection, file: &DiscoveredCodexFile) -> Result<RecordedCodexFile> {
     let path = file.path.to_string_lossy().to_string();
-    let existing: Option<String> = conn
+    let existing: Option<(i64, String)> = conn
         .query_row(
-            "SELECT sha256 FROM codex_files WHERE path = ?1",
+            "SELECT id, sha256 FROM codex_files WHERE path = ?1",
             [&path],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .context("failed to inspect existing Codex file metadata")?;
 
-    if existing.as_deref() == Some(file.sha256.as_str()) {
-        return Ok(false);
+    if let Some((id, sha256)) = existing {
+        if sha256 == file.sha256 {
+            return Ok(RecordedCodexFile { id, changed: false });
+        }
     }
 
     conn.execute(
@@ -371,7 +411,139 @@ fn record_codex_file(conn: &Connection, file: &DiscoveredCodexFile) -> Result<bo
     )
     .context("failed to record Codex file metadata")?;
 
+    let id = conn
+        .query_row(
+            "SELECT id FROM codex_files WHERE path = ?1",
+            [&path],
+            |row| row.get(0),
+        )
+        .context("failed to inspect recorded Codex file metadata")?;
+
+    Ok(RecordedCodexFile { id, changed: true })
+}
+
+fn record_raw_events(
+    conn: &Connection,
+    codex_file_id: i64,
+    path: &Path,
+    summary: &mut IngestSummary,
+) -> Result<()> {
+    let file = File::open(path)
+        .with_context(|| format!("failed to read Codex JSONL file {}", path.display()))?;
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    let mut line_number = 0;
+
+    loop {
+        line.clear();
+        let bytes_read = reader
+            .read_line(&mut line)
+            .with_context(|| format!("failed to read Codex JSONL file {}", path.display()))?;
+        if bytes_read == 0 {
+            break;
+        }
+        line_number += 1;
+        let raw_json = line.trim_end_matches(['\r', '\n']).to_string();
+        if raw_json.trim().is_empty() {
+            summary.raw_events_skipped += 1;
+            continue;
+        }
+
+        let event = parse_raw_event_line(line_number, raw_json);
+        if event.parse_error.is_some() {
+            summary.malformed_lines += 1;
+        }
+        if upsert_raw_event(conn, codex_file_id, &event)? {
+            summary.raw_events_stored += 1;
+        } else {
+            summary.raw_events_skipped += 1;
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_raw_event_line(line_number: i64, raw_json: String) -> RawEventLine {
+    let line_sha256 = sha256_hex(&raw_json);
+    match serde_json::from_str::<Value>(&raw_json) {
+        Ok(value) => RawEventLine {
+            line_number,
+            raw_json,
+            line_sha256,
+            event_type: string_field(&value, &["type", "event_type"]),
+            event_time: string_field(&value, &["timestamp", "time", "created_at"]),
+            parse_error: None,
+        },
+        Err(error) => RawEventLine {
+            line_number,
+            raw_json,
+            line_sha256,
+            event_type: None,
+            event_time: None,
+            parse_error: Some(error.to_string()),
+        },
+    }
+}
+
+fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| value.get(key).and_then(Value::as_str))
+        .map(ToOwned::to_owned)
+}
+
+fn upsert_raw_event(conn: &Connection, codex_file_id: i64, event: &RawEventLine) -> Result<bool> {
+    let existing: Option<String> = conn
+        .query_row(
+            "SELECT line_sha256 FROM raw_events WHERE codex_file_id = ?1 AND line_number = ?2",
+            (codex_file_id, event.line_number),
+            |row| row.get(0),
+        )
+        .optional()
+        .context("failed to inspect existing raw event")?;
+    if existing.as_deref() == Some(event.line_sha256.as_str()) {
+        return Ok(false);
+    }
+
+    conn.execute(
+        "INSERT INTO raw_events (
+            codex_file_id,
+            line_number,
+            raw_json,
+            line_sha256,
+            event_type,
+            event_time,
+            parse_error,
+            created_at
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)
+         ON CONFLICT(codex_file_id, line_number) DO UPDATE SET
+            raw_json = excluded.raw_json,
+            line_sha256 = excluded.line_sha256,
+            event_type = excluded.event_type,
+            event_time = excluded.event_time,
+            parse_error = excluded.parse_error,
+            created_at = CURRENT_TIMESTAMP",
+        (
+            codex_file_id,
+            event.line_number,
+            &event.raw_json,
+            &event.line_sha256,
+            event.event_type.as_deref(),
+            event.event_time.as_deref(),
+            event.parse_error.as_deref(),
+        ),
+    )
+    .context("failed to record raw Codex event")?;
+
     Ok(true)
+}
+
+fn sha256_hex(text: &str) -> String {
+    hex_digest(Sha256::digest(text.as_bytes()).as_slice())
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn inspect_codex(root: &Path) -> CodexStatus {
@@ -565,6 +737,28 @@ fn apply_schema(conn: &Connection, db_path: &Path) -> Result<()> {
             source,
         })
         .with_context(|| format!("failed to initialize database {}", db_path.display()))?;
+    apply_migrations(conn, db_path)?;
+    Ok(())
+}
+
+fn apply_migrations(conn: &Connection, db_path: &Path) -> Result<()> {
+    let migration_version = conn
+        .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+        .map_err(|source| StorageError::ApplySchema {
+            path: db_path.to_path_buf(),
+            source,
+        })
+        .with_context(|| format!("failed to initialize database {}", db_path.display()))?;
+
+    if migration_version < 2 {
+        conn.execute_batch(SCHEMA_V2)
+            .map_err(|source| StorageError::ApplySchema {
+                path: db_path.to_path_buf(),
+                source,
+            })
+            .with_context(|| format!("failed to initialize database {}", db_path.display()))?;
+    }
+
     Ok(())
 }
 
@@ -607,8 +801,6 @@ fn storage_status(conn: &Connection, db_path: &Path) -> Result<StorageStatus> {
 }
 
 const SCHEMA_V1: &str = r#"
-PRAGMA user_version = 1;
-
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -715,6 +907,58 @@ USING fts5(text, content='messages', content_rowid='id');
 
 CREATE VIRTUAL TABLE IF NOT EXISTS command_output_fts
 USING fts5(command, output, content='commands', content_rowid='id');
+"#;
+
+const SCHEMA_V2: &str = r#"
+DROP TABLE IF EXISTS raw_events_fts;
+
+CREATE TABLE IF NOT EXISTS raw_events_v2 (
+    id INTEGER PRIMARY KEY,
+    codex_file_id INTEGER NOT NULL REFERENCES codex_files(id) ON DELETE CASCADE,
+    line_number INTEGER NOT NULL,
+    raw_json TEXT NOT NULL,
+    line_sha256 TEXT NOT NULL,
+    event_type TEXT,
+    event_time TEXT,
+    session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+    parse_error TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (codex_file_id, line_number)
+);
+
+INSERT OR IGNORE INTO raw_events_v2 (
+    id,
+    codex_file_id,
+    line_number,
+    raw_json,
+    line_sha256,
+    event_type,
+    event_time,
+    session_id,
+    parse_error,
+    created_at
+)
+SELECT
+    id,
+    codex_file_id,
+    line_number,
+    raw_json,
+    line_sha256,
+    event_type,
+    event_time,
+    session_id,
+    parse_error,
+    created_at
+FROM raw_events;
+
+DROP TABLE raw_events;
+ALTER TABLE raw_events_v2 RENAME TO raw_events;
+
+CREATE VIRTUAL TABLE IF NOT EXISTS raw_events_fts
+USING fts5(raw_json, parse_error, content='raw_events', content_rowid='id');
+
+INSERT OR IGNORE INTO schema_migrations (version) VALUES (2);
+PRAGMA user_version = 2;
 "#;
 
 #[derive(Debug)]

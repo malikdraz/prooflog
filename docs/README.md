@@ -15,7 +15,7 @@ This directory is the repo-local starting point for ProofLog context.
 
 ## Current Repository State
 
-The repository currently contains the initial Rust CLI, local config handling, SQLite schema initialization, owner-only config/DB file permissions on Unix-like systems, doctor readiness checks, and Codex JSONL file discovery metadata. Raw event storage, parser extraction, git correlation, reports, and final exit-code behavior are still planned roadmap work.
+The repository currently contains the initial Rust CLI, local config handling, SQLite schema initialization, owner-only config/DB file permissions on Unix-like systems, doctor readiness checks, Codex JSONL file discovery metadata, and raw JSONL line storage. Derived parser extraction, git correlation, reports, and final exit-code behavior are still planned roadmap work.
 
 ## Decision Rule
 

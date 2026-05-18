@@ -174,7 +174,7 @@ fn init_creates_sqlite_database_schema_and_is_idempotent() {
 
     assert!(env.db_file().is_file());
     let conn = Connection::open(env.db_file()).unwrap();
-    assert_eq!(user_version(&conn), 1);
+    assert_eq!(user_version(&conn), 2);
     assert_table_exists(&conn, "schema_migrations");
     assert_table_exists(&conn, "codex_files");
     assert_table_exists(&conn, "sessions");
@@ -193,7 +193,7 @@ fn init_creates_sqlite_database_schema_and_is_idempotent() {
             row.get(0)
         })
         .unwrap();
-    assert_eq!(migration_count, 1);
+    assert_eq!(migration_count, 2);
 }
 
 #[test]
@@ -203,7 +203,7 @@ fn doctor_reports_initialized_database_status() {
 
     env.command().arg("doctor").assert().success().stdout(
         predicate::str::contains("sqlite: ok")
-            .and(predicate::str::contains("migration: 1"))
+            .and(predicate::str::contains("migration: 2"))
             .and(predicate::str::contains("fts5: ok")),
     );
 }
@@ -400,6 +400,170 @@ fn repeated_ingest_skips_unchanged_and_updates_changed_files() {
 }
 
 #[test]
+fn ingest_stores_raw_jsonl_lines_and_parse_metadata() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    let file = codex_root.join("session.jsonl");
+    fs::write(
+        &file,
+        "{\"type\":\"session_started\",\"timestamp\":\"2026-05-18T10:00:00Z\"}\n{\"unknown\":true}\nnot json\n\n",
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("raw events stored: 3")
+                .and(predicate::str::contains("raw events skipped: 1"))
+                .and(predicate::str::contains("malformed lines: 1")),
+        );
+
+    let rows = raw_event_rows(env.db_file());
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].line_number, 1);
+    assert_eq!(
+        rows[0].raw_json,
+        "{\"type\":\"session_started\",\"timestamp\":\"2026-05-18T10:00:00Z\"}"
+    );
+    assert_eq!(rows[0].line_sha256, sha256_hex(&rows[0].raw_json));
+    assert_eq!(rows[0].event_type.as_deref(), Some("session_started"));
+    assert_eq!(rows[0].event_time.as_deref(), Some("2026-05-18T10:00:00Z"));
+    assert!(rows[0].parse_error.is_none());
+    assert_eq!(rows[1].line_number, 2);
+    assert_eq!(rows[1].raw_json, "{\"unknown\":true}");
+    assert!(rows[1].event_type.is_none());
+    assert!(rows[1].event_time.is_none());
+    assert!(rows[1].parse_error.is_none());
+    assert_eq!(rows[2].line_number, 3);
+    assert_eq!(rows[2].raw_json, "not json");
+    assert!(rows[2].parse_error.as_deref().unwrap().contains("expected"));
+}
+
+#[test]
+fn repeated_ingest_does_not_duplicate_raw_events() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(codex_root.join("session.jsonl"), "{\"type\":\"a\"}\n").unwrap();
+
+    env.command().arg("init").assert().success();
+    for _ in 0..2 {
+        env.command()
+            .args([
+                "ingest",
+                "--codex",
+                "--codex-root",
+                codex_root.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+    }
+
+    let rows = raw_event_rows(env.db_file());
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].raw_json, "{\"type\":\"a\"}");
+}
+
+#[test]
+fn ingest_preserves_duplicate_physical_lines() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(codex_root.join("session.jsonl"), "{}\n{}\n").unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("raw events stored: 2"));
+
+    let rows = raw_event_rows(env.db_file());
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].line_number, 1);
+    assert_eq!(rows[1].line_number, 2);
+    assert_eq!(rows[0].line_sha256, rows[1].line_sha256);
+}
+
+#[test]
+fn ingest_migrates_existing_v1_database_before_storing_duplicate_lines() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(codex_root.join("session.jsonl"), "{}\n{}\n").unwrap();
+
+    env.command().arg("init").assert().success();
+    fs::remove_file(env.db_file()).unwrap();
+    create_v1_database(env.db_file());
+
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("raw events stored: 2"));
+
+    let conn = Connection::open(env.db_file()).unwrap();
+    assert_eq!(user_version(&conn), 2);
+    assert_eq!(raw_event_rows(env.db_file()).len(), 2);
+}
+
+#[test]
+fn changed_jsonl_line_updates_existing_raw_event_row() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    let file = codex_root.join("session.jsonl");
+    fs::write(&file, "{\"type\":\"before\"}\n").unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    fs::write(&file, "{\"type\":\"after\"}\n").unwrap();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("raw events stored: 1"));
+
+    let rows = raw_event_rows(env.db_file());
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].raw_json, "{\"type\":\"after\"}");
+    assert_eq!(rows[0].event_type.as_deref(), Some("after"));
+}
+
+#[test]
 fn ingest_missing_codex_root_is_actionable_error() {
     let env = CliEnv::new();
     let missing_root = env.home.path().join("missing-codex");
@@ -547,6 +711,15 @@ struct CodexFileRow {
     sha256: String,
 }
 
+struct RawEventRow {
+    line_number: i64,
+    raw_json: String,
+    line_sha256: String,
+    event_type: Option<String>,
+    event_time: Option<String>,
+    parse_error: Option<String>,
+}
+
 fn codex_file_rows(db_path: impl AsRef<std::path::Path>) -> Vec<CodexFileRow> {
     let conn = Connection::open(db_path).unwrap();
     let mut stmt = conn
@@ -563,6 +736,81 @@ fn codex_file_rows(db_path: impl AsRef<std::path::Path>) -> Vec<CodexFileRow> {
     .unwrap()
     .collect::<Result<Vec<_>, _>>()
     .unwrap()
+}
+
+fn raw_event_rows(db_path: impl AsRef<std::path::Path>) -> Vec<RawEventRow> {
+    let conn = Connection::open(db_path).unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT line_number, raw_json, line_sha256, event_type, event_time, parse_error
+             FROM raw_events
+             ORDER BY codex_file_id, line_number",
+        )
+        .unwrap();
+    stmt.query_map([], |row| {
+        Ok(RawEventRow {
+            line_number: row.get(0)?,
+            raw_json: row.get(1)?,
+            line_sha256: row.get(2)?,
+            event_type: row.get(3)?,
+            event_time: row.get(4)?,
+            parse_error: row.get(5)?,
+        })
+    })
+    .unwrap()
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()
+}
+
+fn create_v1_database(db_path: impl AsRef<std::path::Path>) {
+    let conn = Connection::open(db_path).unwrap();
+    conn.execute_batch(
+        r#"
+        PRAGMA user_version = 1;
+
+        CREATE TABLE schema_migrations (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO schema_migrations (version) VALUES (1);
+
+        CREATE TABLE codex_files (
+            id INTEGER PRIMARY KEY,
+            path TEXT NOT NULL UNIQUE,
+            size_bytes INTEGER,
+            modified_at TEXT,
+            sha256 TEXT,
+            ingested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE sessions (
+            id INTEGER PRIMARY KEY,
+            codex_session_id TEXT UNIQUE,
+            workspace_path TEXT,
+            model TEXT,
+            title TEXT,
+            started_at TEXT,
+            ended_at TEXT,
+            event_count INTEGER NOT NULL DEFAULT 0,
+            parse_status TEXT NOT NULL DEFAULT 'unknown'
+        );
+
+        CREATE TABLE raw_events (
+            id INTEGER PRIMARY KEY,
+            codex_file_id INTEGER NOT NULL REFERENCES codex_files(id) ON DELETE CASCADE,
+            line_number INTEGER NOT NULL,
+            raw_json TEXT NOT NULL,
+            line_sha256 TEXT NOT NULL UNIQUE,
+            event_type TEXT,
+            event_time TEXT,
+            session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+            parse_error TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (codex_file_id, line_number)
+        );
+        "#,
+    )
+    .unwrap();
 }
 
 fn sha256_hex(text: &str) -> String {

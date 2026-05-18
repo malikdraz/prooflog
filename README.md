@@ -65,7 +65,7 @@ Within 7 days of first usable release:
 
 ## Current Status
 
-ProofLog currently has an initial Rust CLI with local config path handling, SQLite schema initialization, owner-only file permissions on Unix-like systems, first-time `doctor` readiness output, and Codex JSONL file discovery metadata. The binary builds and exposes the planned MVP command surface:
+ProofLog currently has an initial Rust CLI with local config path handling, SQLite schema initialization, owner-only file permissions on Unix-like systems, first-time `doctor` readiness output, Codex JSONL file discovery, and raw JSONL line storage. The binary builds and exposes the planned MVP command surface:
 
 ```bash
 prooflog --help
@@ -75,7 +75,7 @@ prooflog ingest --codex
 prooflog proof --since main
 ```
 
-`prooflog init` creates a local TOML config file, initializes the local SQLite database schema, and sets config/DB files to owner-readable/writable on Unix-like systems. `prooflog doctor` can read config, show storage status, count local Codex JSONL files, detect the current git repo when available, and warn on missing Codex/git context or broad config/DB file permissions. `prooflog ingest --codex` discovers `.jsonl` files and records file metadata in SQLite. Raw event ingestion, git correlation, proof reports, and final exit-code behavior are still planned.
+`prooflog init` creates a local TOML config file, initializes the local SQLite database schema, and sets config/DB files to owner-readable/writable on Unix-like systems. `prooflog doctor` can read config, show storage status, count local Codex JSONL files, detect the current git repo when available, and warn on missing Codex/git context or broad config/DB file permissions. `prooflog ingest --codex` discovers `.jsonl` files, records file metadata, and stores non-empty raw JSONL lines in SQLite while preserving malformed lines with parse errors. Derived parser extraction, git correlation, proof reports, and final exit-code behavior are still planned.
 
 Start here:
 

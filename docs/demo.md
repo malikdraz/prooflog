@@ -1,6 +1,6 @@
 # Demo Script
 
-This is the target first-demo flow. `init`, `doctor`, and JSONL file discovery are implemented; raw event ingestion and proof report generation are still planned.
+This is the target first-demo flow. `init`, `doctor`, JSONL file discovery, and raw JSONL line storage are implemented; derived parser extraction and proof report generation are still planned.
 
 ```bash
 cargo install --path .
@@ -30,7 +30,7 @@ Config:
 Storage:
   db: /home/user/.local/share/prooflog/prooflog.db
   sqlite: ok
-  migration: 1
+  migration: 2
   fts5: ok
   journal: wal
 
