@@ -65,7 +65,7 @@ Within 7 days of first usable release:
 
 ## Current Status
 
-ProofLog currently has an initial Rust CLI with local config path handling and SQLite schema initialization. The binary builds and exposes the planned MVP command surface:
+ProofLog currently has an initial Rust CLI with local config path handling, SQLite schema initialization, and owner-only file permissions on Unix-like systems. The binary builds and exposes the planned MVP command surface:
 
 ```bash
 prooflog --help
@@ -75,7 +75,7 @@ prooflog ingest --codex
 prooflog proof --since main
 ```
 
-`prooflog init` creates a local TOML config file and initializes the local SQLite database schema. `prooflog doctor` can read config and show the resolved config, database, SQLite, migration, FTS5, Codex root, and redaction settings. Ingestion, git correlation, proof reports, and final exit-code behavior are still planned.
+`prooflog init` creates a local TOML config file, initializes the local SQLite database schema, and sets config/DB files to owner-readable/writable on Unix-like systems. `prooflog doctor` can read config, show storage status, and warn when config or DB file permissions are broader than owner-only. Ingestion, git correlation, proof reports, and final exit-code behavior are still planned.
 
 Start here:
 

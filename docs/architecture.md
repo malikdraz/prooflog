@@ -13,7 +13,7 @@ Raw events are the source of truth. Derived tables are disposable.
    - `rusqlite`
    - WAL mode
    - FTS5
-   - owner-only DB permissions planned
+   - owner-only config and DB file permissions on Unix-like systems
 3. Codex discovery
    - configurable Codex root
    - recursive JSONL discovery

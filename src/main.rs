@@ -1,3 +1,5 @@
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -61,6 +63,8 @@ fn init_config(args: InitArgs) -> Result<()> {
 
     config.write_if_missing(&paths.config_file)?;
     let storage = initialize_database(&config.db_path)?;
+    enforce_owner_only_permissions(&paths.config_file)?;
+    enforce_owner_only_permissions(&config.db_path)?;
     print_config_status("Config:", &paths.config_file, &config);
     print_storage_status(&storage);
     println!("Status:");
@@ -79,9 +83,11 @@ fn doctor_config(args: DoctorArgs) -> Result<()> {
         })?
         .with_overrides(args.db, args.codex_root);
     let storage = inspect_database(&config.db_path)?;
+    let warnings = permission_warnings(&paths.config_file, &config.db_path)?;
 
     print_config_status("Config:", &paths.config_file, &config);
     print_storage_status(&storage);
+    print_warnings(&warnings);
     println!("Status:");
     println!("  config ok");
     Ok(())
@@ -105,6 +111,17 @@ fn print_storage_status(status: &StorageStatus) {
     println!("  migration: {}", status.migration_version);
     println!("  fts5: ok");
     println!("  journal: {}", status.journal_mode);
+}
+
+fn print_warnings(warnings: &[String]) {
+    if warnings.is_empty() {
+        return;
+    }
+
+    println!("Warnings:");
+    for warning in warnings {
+        println!("  {warning}");
+    }
 }
 
 fn ensure_config_file_path(path: &Path) -> Result<()> {
@@ -443,7 +460,7 @@ impl ProoflogConfig {
             .context("failed to create config directory")?;
 
         let text = toml::to_string_pretty(self).context("failed to serialize config")?;
-        fs::write(path, text)
+        write_owner_only_file(path, text.as_bytes())
             .map_err(|source| ConfigError::WriteConfig {
                 path: path.to_path_buf(),
                 source,
@@ -460,6 +477,77 @@ impl ProoflogConfig {
         }
         self
     }
+}
+
+#[cfg(unix)]
+fn write_owner_only_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(bytes)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_owner_only_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    fs::write(path, bytes)
+}
+
+#[cfg(unix)]
+fn enforce_owner_only_permissions(path: &Path) -> Result<()> {
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .map_err(|source| PermissionError::SetPermissions {
+            path: path.to_path_buf(),
+            source,
+        })
+        .context("failed to set owner-only permissions")
+}
+
+#[cfg(not(unix))]
+fn enforce_owner_only_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn permission_warnings(config_file: &Path, db_path: &Path) -> Result<Vec<String>> {
+    let mut warnings = Vec::new();
+    collect_permission_warning("config", config_file, &mut warnings)?;
+    collect_permission_warning("database", db_path, &mut warnings)?;
+    Ok(warnings)
+}
+
+#[cfg(not(unix))]
+fn permission_warnings(_config_file: &Path, _db_path: &Path) -> Result<Vec<String>> {
+    Ok(Vec::new())
+}
+
+#[cfg(unix)]
+fn collect_permission_warning(label: &str, path: &Path, warnings: &mut Vec<String>) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let mode = fs::metadata(path)
+        .map_err(|source| PermissionError::ReadPermissions {
+            path: path.to_path_buf(),
+            source,
+        })
+        .context("failed to inspect permissions")?
+        .permissions()
+        .mode()
+        & 0o777;
+
+    if mode & 0o077 != 0 {
+        warnings.push(format!(
+            "{label} permissions are {mode:04o}; run `chmod 600 {}` to make it owner-only",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -531,6 +619,20 @@ enum StorageError {
     FtsUnavailable {
         path: PathBuf,
         source: rusqlite::Error,
+    },
+}
+
+#[derive(Debug, thiserror::Error)]
+enum PermissionError {
+    #[error("could not set owner-only permissions for {path}")]
+    SetPermissions {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("could not read permissions for {path}")]
+    ReadPermissions {
+        path: PathBuf,
+        source: std::io::Error,
     },
 }
 

@@ -16,7 +16,7 @@ Correction: Raw-first storage, unknown event preservation, fixture-driven parser
 
 Failure mode: ProofLog stores, prints, or exports sensitive transcript content unsafely.
 
-Correction: Local-only by default, owner-only DB permissions, redaction checks before export, no cloud.
+Correction: Local-only by default, owner-only config and DB file permissions on Unix-like systems, redaction checks before export, no cloud.
 
 ## Weak Adoption
 

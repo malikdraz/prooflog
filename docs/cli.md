@@ -15,7 +15,9 @@ prooflog proof --since main
 
 `prooflog init` creates a local TOML config file and initializes the local SQLite database schema.
 
-`prooflog doctor` reads the config file and prints resolved paths plus storage status.
+On Unix-like systems, `prooflog init` sets the config and DB files to owner-readable/writable only.
+
+`prooflog doctor` reads the config file and prints resolved paths plus storage status. On Unix-like systems, it warns when config or DB file permissions are broader than owner-only.
 
 The current config stores:
 
@@ -49,9 +51,9 @@ $HOME/.codex
 
 ## Planned Behavior
 
-`prooflog init` will later add owner-only permission enforcement around local storage.
+`prooflog init` will later extend storage hardening around directories and SQLite sidecar files if needed.
 
-`prooflog doctor` will later check Codex history, database permissions, and git context.
+`prooflog doctor` will later check Codex history and git context.
 
 `prooflog ingest --codex` will discover and ingest local Codex JSONL history.
 
@@ -88,3 +90,9 @@ It also creates these FTS5 tables:
 - `command_output_fts`
 
 The schema is raw-first. Later parser and ingestion work will populate it.
+
+## Permission Warnings
+
+On Unix-like systems, ProofLog expects config and DB files to use mode `0600`.
+
+If `prooflog doctor` finds broader permissions, it prints a warning with a `chmod 600 <path>` fix. Permission warnings do not currently make `doctor` fail.

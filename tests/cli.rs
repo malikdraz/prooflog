@@ -2,6 +2,8 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use rusqlite::Connection;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use tempfile::TempDir;
 
 #[test]
@@ -242,6 +244,33 @@ fn db_path_that_is_directory_reports_storage_error() {
         );
 }
 
+#[cfg(unix)]
+#[test]
+fn init_creates_config_and_db_with_owner_only_permissions() {
+    let env = CliEnv::new();
+
+    env.command().arg("init").assert().success();
+
+    assert_eq!(file_mode(env.config_file()), 0o600);
+    assert_eq!(file_mode(env.db_file()), 0o600);
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_warns_on_unsafe_config_and_db_permissions() {
+    let env = CliEnv::new();
+    env.command().arg("init").assert().success();
+    fs::set_permissions(env.config_file(), fs::Permissions::from_mode(0o644)).unwrap();
+    fs::set_permissions(env.db_file(), fs::Permissions::from_mode(0o666)).unwrap();
+
+    env.command().arg("doctor").assert().success().stdout(
+        predicate::str::contains("Warnings:")
+            .and(predicate::str::contains("config permissions are 0644"))
+            .and(predicate::str::contains("database permissions are 0666"))
+            .and(predicate::str::contains("chmod 600")),
+    );
+}
+
 struct CliEnv {
     home: TempDir,
     config_home: TempDir,
@@ -289,4 +318,9 @@ fn assert_table_exists(conn: &Connection, table: &str) {
 fn user_version(conn: &Connection) -> i64 {
     conn.query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap()
+}
+
+#[cfg(unix)]
+fn file_mode(path: impl AsRef<std::path::Path>) -> u32 {
+    fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
