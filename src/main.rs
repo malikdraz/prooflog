@@ -1,6 +1,7 @@
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
+    collections::BTreeMap,
     env,
     fs::{self, File},
     io::{BufRead, BufReader, Read},
@@ -281,6 +282,7 @@ fn discover_and_record_codex_files(conn: &mut Connection, root: &Path) -> Result
         }
         record_raw_events(&tx, recorded_file.id, &file.path, &mut summary)?;
     }
+    derive_sessions(&tx)?;
     rebuild_raw_events_fts(&tx)?;
     tx.commit()
         .context("failed to record discovered Codex files")?;
@@ -553,6 +555,137 @@ fn rebuild_raw_events_fts(conn: &Connection) -> Result<()> {
     )
     .context("failed to rebuild raw event FTS index")?;
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct DerivedSession {
+    codex_session_id: String,
+    workspace_path: Option<String>,
+    model: Option<String>,
+    title: Option<String>,
+    started_at: Option<String>,
+    ended_at: Option<String>,
+    event_count: i64,
+}
+
+fn derive_sessions(conn: &Connection) -> Result<()> {
+    let mut sessions = collect_sessions(conn)?;
+    for session in sessions.values_mut() {
+        let session_id = upsert_session(conn, session)?;
+        conn.execute(
+            "UPDATE raw_events
+             SET session_id = ?1
+             WHERE parse_error IS NULL
+               AND json_extract(raw_json, '$.session_id') = ?2",
+            (session_id, &session.codex_session_id),
+        )
+        .context("failed to link raw events to derived session")?;
+    }
+
+    Ok(())
+}
+
+fn collect_sessions(conn: &Connection) -> Result<BTreeMap<String, DerivedSession>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT raw_json, event_time
+             FROM raw_events
+             WHERE parse_error IS NULL
+             ORDER BY codex_file_id, line_number",
+        )
+        .context("failed to derive sessions from raw events")?;
+    let mut rows = stmt
+        .query([])
+        .context("failed to derive sessions from raw events")?;
+    let mut sessions = BTreeMap::new();
+
+    while let Some(row) = rows
+        .next()
+        .context("failed to derive sessions from raw events")?
+    {
+        let raw_json: String = row
+            .get(0)
+            .context("failed to derive sessions from raw events")?;
+        let event_time: Option<String> = row
+            .get(1)
+            .context("failed to derive sessions from raw events")?;
+        let value: Value =
+            serde_json::from_str(&raw_json).context("failed to derive sessions from raw events")?;
+        let Some(codex_session_id) = value.get("session_id").and_then(Value::as_str) else {
+            continue;
+        };
+        let entry = sessions
+            .entry(codex_session_id.to_string())
+            .or_insert_with(|| DerivedSession {
+                codex_session_id: codex_session_id.to_string(),
+                ..DerivedSession::default()
+            });
+        entry.event_count += 1;
+        if entry.started_at.is_none() {
+            entry.started_at = event_time.clone();
+        }
+        if event_time.is_some() {
+            entry.ended_at = event_time;
+        }
+        if value.get("type").and_then(Value::as_str) == Some("session_meta") {
+            fill_session_metadata(entry, &value);
+        }
+    }
+
+    Ok(sessions)
+}
+
+fn fill_session_metadata(session: &mut DerivedSession, value: &Value) {
+    if session.workspace_path.is_none() {
+        session.workspace_path = string_field(value, &["workspace_path"]);
+    }
+    if session.model.is_none() {
+        session.model = string_field(value, &["model"]);
+    }
+    if session.title.is_none() {
+        session.title = string_field(value, &["title", "summary"]);
+    }
+}
+
+fn upsert_session(conn: &Connection, session: &DerivedSession) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO sessions (
+            codex_session_id,
+            workspace_path,
+            model,
+            title,
+            started_at,
+            ended_at,
+            event_count,
+            parse_status
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'parsed')
+         ON CONFLICT(codex_session_id) DO UPDATE SET
+            workspace_path = excluded.workspace_path,
+            model = excluded.model,
+            title = excluded.title,
+            started_at = excluded.started_at,
+            ended_at = excluded.ended_at,
+            event_count = excluded.event_count,
+            parse_status = excluded.parse_status",
+        (
+            &session.codex_session_id,
+            session.workspace_path.as_deref(),
+            session.model.as_deref(),
+            session.title.as_deref(),
+            session.started_at.as_deref(),
+            session.ended_at.as_deref(),
+            session.event_count,
+        ),
+    )
+    .context("failed to record derived session")?;
+
+    conn.query_row(
+        "SELECT id FROM sessions WHERE codex_session_id = ?1",
+        [&session.codex_session_id],
+        |row| row.get(0),
+    )
+    .context("failed to inspect derived session")
 }
 
 fn sha256_hex(text: &str) -> String {

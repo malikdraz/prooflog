@@ -644,6 +644,114 @@ fn changed_jsonl_line_refreshes_raw_event_fts_index() {
 }
 
 #[test]
+fn ingest_derives_sessions_from_raw_events() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("01_single_success.jsonl"),
+        include_str!("fixtures/codex/01_single_success.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let sessions = session_rows(env.db_file());
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].codex_session_id, "session-redacted-001");
+    assert_eq!(
+        sessions[0].workspace_path.as_deref(),
+        Some("/workspace/prooflog")
+    );
+    assert_eq!(sessions[0].model.as_deref(), Some("gpt-5"));
+    assert_eq!(
+        sessions[0].title.as_deref(),
+        Some("Add focused ProofLog test")
+    );
+    assert_eq!(
+        sessions[0].started_at.as_deref(),
+        Some("2026-05-18T10:00:00Z")
+    );
+    assert_eq!(
+        sessions[0].ended_at.as_deref(),
+        Some("2026-05-18T10:01:00Z")
+    );
+    assert_eq!(sessions[0].event_count, 4);
+    assert_eq!(sessions[0].parse_status, "parsed");
+    assert_eq!(linked_raw_event_count(env.db_file(), sessions[0].id), 4);
+}
+
+#[test]
+fn repeated_ingest_does_not_duplicate_sessions() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("01_single_success.jsonl"),
+        include_str!("fixtures/codex/01_single_success.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    for _ in 0..2 {
+        env.command()
+            .args([
+                "ingest",
+                "--codex",
+                "--codex-root",
+                codex_root.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+    }
+
+    assert_eq!(session_rows(env.db_file()).len(), 1);
+}
+
+#[test]
+fn session_derivation_allows_missing_optional_fields() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("minimal.jsonl"),
+        "{\"type\":\"session_meta\",\"session_id\":\"minimal-session\"}\nnot json\n",
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let sessions = session_rows(env.db_file());
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].codex_session_id, "minimal-session");
+    assert!(sessions[0].workspace_path.is_none());
+    assert!(sessions[0].model.is_none());
+    assert!(sessions[0].title.is_none());
+    assert!(sessions[0].started_at.is_none());
+    assert!(sessions[0].ended_at.is_none());
+    assert_eq!(sessions[0].event_count, 1);
+    assert_eq!(sessions[0].parse_status, "parsed");
+}
+
+#[test]
 fn doctor_reports_missing_raw_event_fts_table() {
     let env = CliEnv::new();
     env.command().arg("init").assert().success();
@@ -851,6 +959,18 @@ struct RawEventRow {
     parse_error: Option<String>,
 }
 
+struct SessionRow {
+    id: i64,
+    codex_session_id: String,
+    workspace_path: Option<String>,
+    model: Option<String>,
+    title: Option<String>,
+    started_at: Option<String>,
+    ended_at: Option<String>,
+    event_count: i64,
+    parse_status: String,
+}
+
 fn codex_file_rows(db_path: impl AsRef<std::path::Path>) -> Vec<CodexFileRow> {
     let conn = Connection::open(db_path).unwrap();
     let mut stmt = conn
@@ -890,6 +1010,43 @@ fn raw_event_rows(db_path: impl AsRef<std::path::Path>) -> Vec<RawEventRow> {
     })
     .unwrap()
     .collect::<Result<Vec<_>, _>>()
+    .unwrap()
+}
+
+fn session_rows(db_path: impl AsRef<std::path::Path>) -> Vec<SessionRow> {
+    let conn = Connection::open(db_path).unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, codex_session_id, workspace_path, model, title, started_at, ended_at, event_count, parse_status
+             FROM sessions
+             ORDER BY codex_session_id",
+        )
+        .unwrap();
+    stmt.query_map([], |row| {
+        Ok(SessionRow {
+            id: row.get(0)?,
+            codex_session_id: row.get(1)?,
+            workspace_path: row.get(2)?,
+            model: row.get(3)?,
+            title: row.get(4)?,
+            started_at: row.get(5)?,
+            ended_at: row.get(6)?,
+            event_count: row.get(7)?,
+            parse_status: row.get(8)?,
+        })
+    })
+    .unwrap()
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()
+}
+
+fn linked_raw_event_count(db_path: impl AsRef<std::path::Path>, session_id: i64) -> i64 {
+    let conn = Connection::open(db_path).unwrap();
+    conn.query_row(
+        "SELECT COUNT(*) FROM raw_events WHERE session_id = ?1",
+        [session_id],
+        |row| row.get(0),
+    )
     .unwrap()
 }
 

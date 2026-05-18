@@ -25,7 +25,7 @@ The current config stores:
 - Codex root
 - redaction defaults
 
-`prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, and rebuilds the raw event FTS index.
+`prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds the raw event FTS index, and derives session rows.
 
 `prooflog proof --since main` is still an explicit placeholder. It does not inspect git state or produce proof reports yet.
 
@@ -57,7 +57,7 @@ $HOME/.codex
 
 `prooflog doctor` will later add deeper parser diagnostics and richer git edge-case handling.
 
-`prooflog ingest --codex` will later derive sessions, messages, commands, approvals, file changes, and proof facts from stored raw lines.
+`prooflog ingest --codex` will later derive messages, commands, approvals, file changes, and proof facts from stored raw lines.
 
 `prooflog proof --since main` will produce the core proof report.
 
@@ -91,7 +91,7 @@ It also creates these FTS5 tables:
 - `messages_fts`
 - `command_output_fts`
 
-The schema is raw-first. Current ingest populates `codex_files` and `raw_events`; later parser work will populate the derived tables.
+The schema is raw-first. Current ingest populates `codex_files`, `raw_events`, and `sessions`; later parser work will populate the remaining derived tables.
 
 ## Codex Discovery
 
@@ -134,6 +134,23 @@ Current ingest output includes:
 - warning count
 
 Warning details are grouped under `Warnings:` only when present. After ingest, `raw_events_fts` is rebuilt from stored raw events for internal diagnostics. This is not a user-facing search command, and derived parser extraction remains planned follow-up work.
+
+## Session Derivation
+
+After storing raw events, ingest derives `sessions` rows from parseable events with a top-level `session_id`.
+
+When available, each derived session records:
+
+- Codex session id
+- workspace path
+- model
+- title or summary
+- first event timestamp
+- latest event timestamp
+- linked raw event count
+- parse status
+
+Missing optional metadata is stored as NULL. Raw events with a known session id are linked back to the derived `sessions.id`. Message, command, approval, file-change, and proof-fact extraction are planned follow-up work.
 
 ## Permission Warnings
 
