@@ -122,6 +122,77 @@ fn proof_fails_on_invalid_since_ref() {
 }
 
 #[test]
+fn proof_reports_changed_files_and_diff_stats() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::write(repo.join("README.md"), "# test\n\nchanged\n").unwrap();
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    git(&repo, ["add", "README.md", "src/main.rs"]);
+    git(&repo, ["commit", "-m", "change files"]);
+
+    env.command_in(&repo)
+        .args(["proof", "--since", "main~1"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Changed:")
+                .and(predicate::str::contains("files: 2"))
+                .and(predicate::str::contains("additions: 3"))
+                .and(predicate::str::contains("deletions: 0"))
+                .and(predicate::str::contains("docs only: no"))
+                .and(predicate::str::contains("M README.md (+2 -0)"))
+                .and(predicate::str::contains("A src/main.rs (+1 -0)")),
+        );
+}
+
+#[test]
+fn proof_reports_docs_only_changes() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("docs")).unwrap();
+    fs::write(repo.join("docs").join("cli.md"), "docs\n").unwrap();
+    git(&repo, ["add", "docs/cli.md"]);
+    git(&repo, ["commit", "-m", "docs"]);
+
+    env.command_in(&repo)
+        .args(["proof", "--since", "main~1"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Changed:")
+                .and(predicate::str::contains("files: 1"))
+                .and(predicate::str::contains("docs only: yes"))
+                .and(predicate::str::contains("A docs/cli.md (+1 -0)")),
+        );
+}
+
+#[test]
+fn proof_reports_deleted_and_renamed_files() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::write(repo.join("delete-me.txt"), "delete\n").unwrap();
+    fs::write(repo.join("old-name.txt"), "rename\n").unwrap();
+    git(&repo, ["add", "delete-me.txt", "old-name.txt"]);
+    git(&repo, ["commit", "-m", "add files"]);
+    fs::remove_file(repo.join("delete-me.txt")).unwrap();
+    git(&repo, ["mv", "old-name.txt", "new-name.txt"]);
+    git(&repo, ["commit", "-am", "delete and rename"]);
+
+    env.command_in(&repo)
+        .args(["proof", "--since", "main~1"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("files: 2")
+                .and(predicate::str::contains("D delete-me.txt (+0 -1)"))
+                .and(predicate::str::contains(
+                    "R old-name.txt -> new-name.txt (+0 -0)",
+                )),
+        );
+}
+
+#[test]
 fn init_creates_config_with_resolved_local_paths() {
     let env = CliEnv::new();
 

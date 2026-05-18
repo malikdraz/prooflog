@@ -133,6 +133,7 @@ fn proof_git_context(args: ProofArgs) -> Result<()> {
         "failed to resolve current directory; pass --repo <PATH> to choose a repository",
     )?);
     let git = inspect_proof_git(&repo_path, &args.since)?;
+    let changed = inspect_changed_files(&git.repo_root, &git.merge_base)?;
 
     println!("Git:");
     println!("  repo: {}", git.repo_root.display());
@@ -140,10 +141,31 @@ fn proof_git_context(args: ProofArgs) -> Result<()> {
     println!("  head: {}", git.head);
     println!("  merge base: {}", git.merge_base);
     println!("  dirty: {}", if git.dirty { "yes" } else { "no" });
+    print_changed_files(&changed);
     println!("Proof:");
     println!("  since: {}", args.since);
     println!("  proof report: not implemented yet");
     Ok(())
+}
+
+fn print_changed_files(changed: &ChangedFiles) {
+    println!("Changed:");
+    println!("  files: {}", changed.files.len());
+    println!("  additions: {}", changed.total_additions);
+    println!("  deletions: {}", changed.total_deletions);
+    println!(
+        "  docs only: {}",
+        if changed.docs_only { "yes" } else { "no" }
+    );
+    for file in &changed.files {
+        println!(
+            "  {} {} (+{} -{})",
+            file.status,
+            file.display_path(),
+            display_stat(file.additions),
+            display_stat(file.deletions)
+        );
+    }
 }
 
 fn print_config_status(heading: &str, config_file: &Path, config: &ProoflogConfig) {
@@ -235,6 +257,32 @@ struct ProofGitContext {
     head: String,
     merge_base: String,
     dirty: bool,
+}
+
+#[derive(Debug)]
+struct ChangedFiles {
+    files: Vec<ChangedFile>,
+    total_additions: i64,
+    total_deletions: i64,
+    docs_only: bool,
+}
+
+#[derive(Debug)]
+struct ChangedFile {
+    status: String,
+    path: String,
+    previous_path: Option<String>,
+    additions: Option<i64>,
+    deletions: Option<i64>,
+}
+
+impl ChangedFile {
+    fn display_path(&self) -> String {
+        match &self.previous_path {
+            Some(previous_path) => format!("{previous_path} -> {}", self.path),
+            None => self.path.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -1245,6 +1293,119 @@ fn inspect_proof_git(repo_path: &Path, since: &str) -> Result<ProofGitContext> {
     })
 }
 
+fn inspect_changed_files(repo_root: &Path, merge_base: &str) -> Result<ChangedFiles> {
+    let numstat = run_git_in(repo_root, ["diff", "--numstat", "-M", merge_base, "HEAD"])
+        .map_err(|_| GitError::DiffFailed {
+            path: repo_root.to_path_buf(),
+        })
+        .with_context(|| format!("failed to inspect changed files in {}", repo_root.display()))?;
+    let name_status = run_git_in(
+        repo_root,
+        ["diff", "--name-status", "-M", merge_base, "HEAD"],
+    )
+    .map_err(|_| GitError::DiffFailed {
+        path: repo_root.to_path_buf(),
+    })
+    .with_context(|| format!("failed to inspect changed files in {}", repo_root.display()))?;
+
+    let mut stats = parse_numstat(&numstat);
+    let mut files = parse_name_status(&name_status);
+    for file in &mut files {
+        if let Some((additions, deletions)) = stats.remove(&file.path) {
+            file.additions = additions;
+            file.deletions = deletions;
+        }
+    }
+    files.sort_by_key(|file| file.display_path());
+    let total_additions = files.iter().filter_map(|file| file.additions).sum();
+    let total_deletions = files.iter().filter_map(|file| file.deletions).sum();
+    let docs_only = !files.is_empty() && files.iter().all(|file| is_docs_path(&file.path));
+
+    Ok(ChangedFiles {
+        files,
+        total_additions,
+        total_deletions,
+        docs_only,
+    })
+}
+
+fn parse_numstat(text: &str) -> BTreeMap<String, (Option<i64>, Option<i64>)> {
+    let mut stats = BTreeMap::new();
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let mut fields = line.split('\t');
+        let Some(additions) = fields.next() else {
+            continue;
+        };
+        let Some(deletions) = fields.next() else {
+            continue;
+        };
+        let Some(path) = fields.next_back() else {
+            continue;
+        };
+        stats.insert(
+            normalize_numstat_path(path),
+            (parse_diff_stat(additions), parse_diff_stat(deletions)),
+        );
+    }
+    stats
+}
+
+fn normalize_numstat_path(path: &str) -> String {
+    if let Some((_, new_path)) = path.split_once(" => ") {
+        return new_path.replace(['{', '}'], "");
+    }
+    path.to_string()
+}
+
+fn parse_name_status(text: &str) -> Vec<ChangedFile> {
+    let mut files = Vec::new();
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let mut fields = line.split('\t');
+        let Some(status) = fields.next() else {
+            continue;
+        };
+        let short_status = status.chars().next().unwrap_or('?').to_string();
+        if short_status == "R" {
+            let Some(previous_path) = fields.next() else {
+                continue;
+            };
+            let Some(path) = fields.next() else {
+                continue;
+            };
+            files.push(ChangedFile {
+                status: short_status,
+                path: path.to_string(),
+                previous_path: Some(previous_path.to_string()),
+                additions: None,
+                deletions: None,
+            });
+        } else if let Some(path) = fields.next() {
+            files.push(ChangedFile {
+                status: short_status,
+                path: path.to_string(),
+                previous_path: None,
+                additions: None,
+                deletions: None,
+            });
+        }
+    }
+    files
+}
+
+fn parse_diff_stat(text: &str) -> Option<i64> {
+    text.parse().ok()
+}
+
+fn display_stat(value: Option<i64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn is_docs_path(path: &str) -> bool {
+    path == "README.md" || path == "AGENTS.md" || path.starts_with("docs/") || path.ends_with(".md")
+}
+
 fn run_git<const N: usize>(args: [&str; N]) -> Option<String> {
     let output = ProcessCommand::new("git").args(args).output().ok()?;
     if !output.status.success() {
@@ -1870,6 +2031,8 @@ enum GitError {
     InvalidBaseRef { reference: String },
     #[error("could not inspect git status: {path}")]
     StatusFailed { path: PathBuf },
+    #[error("could not inspect git diff: {path}")]
+    DiffFailed { path: PathBuf },
 }
 
 #[derive(Debug, Parser)]
