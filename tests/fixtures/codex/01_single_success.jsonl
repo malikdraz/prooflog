@@ -1,0 +1,4 @@
+{"type":"session_meta","timestamp":"2026-05-18T10:00:00Z","session_id":"session-redacted-001","workspace_path":"/workspace/prooflog","model":"gpt-5","title":"Add focused ProofLog test"}
+{"type":"message","timestamp":"2026-05-18T10:00:05Z","session_id":"session-redacted-001","message":{"role":"user","content":"Add a focused test for the ProofLog ingest summary and verify it passes."}}
+{"type":"message","timestamp":"2026-05-18T10:00:20Z","session_id":"session-redacted-001","message":{"role":"assistant","content":"I added the focused ingest summary test and will run the Rust test suite."}}
+{"type":"command","timestamp":"2026-05-18T10:01:00Z","session_id":"session-redacted-001","command":{"cmd":"cargo test","cwd":"/workspace/prooflog","status":"success","exit_code":0,"output":"test result: ok. 32 passed; 0 failed"}}

@@ -6,8 +6,10 @@ Create five redacted fixtures from real Codex JSONL.
 
 1. `01_single_success.jsonl`
    - one user request
+   - one assistant response
    - one passing verification command
    - expected: one session, one command, one PASS proof fact
+   - status: present at `tests/fixtures/codex/01_single_success.jsonl`
 2. `02_fail_then_pass.jsonl`
    - command fails, later rerun passes
    - expected: original failure marked resolved
