@@ -25,6 +25,7 @@ Create five redacted fixtures from real Codex JSONL.
 5. `05_file_edits_diff.jsonl`
    - file edits and diffs across code, config, and docs
    - expected: changed paths and risky path categories
+   - status: present at `tests/fixtures/codex/05_file_edits_diff.jsonl`
 
 ## Redaction Rules
 

@@ -48,6 +48,23 @@ fn fixture_04_approval_risk_covers_approval_and_risk_shapes() {
     assert!(fixture.friction_facts >= 1);
 }
 
+#[test]
+fn fixture_05_file_edits_diff_covers_paths_stats_and_risk() {
+    let fixture = parse_fixture("tests/fixtures/codex/05_file_edits_diff.jsonl");
+
+    assert_eq!(fixture.sessions, 1);
+    assert_eq!(fixture.file_changes, 3);
+    assert_eq!(fixture.total_lines_added, 7);
+    assert_eq!(fixture.total_lines_deleted, 3);
+    assert_eq!(fixture.risky_path_facts, 1);
+    assert_eq!(fixture.docs_low_risk_paths, 1);
+    assert!(fixture.changed_paths.contains(&"src/main.rs".to_string()));
+    assert!(fixture.changed_paths.contains(&"docs/cli.md".to_string()));
+    assert!(fixture
+        .changed_paths
+        .contains(&".github/workflows/ci.yml".to_string()));
+}
+
 #[derive(Default)]
 struct FixtureSummary {
     sessions: usize,
@@ -66,6 +83,12 @@ struct FixtureSummary {
     sandbox_approval_events: usize,
     risk_facts: usize,
     friction_facts: usize,
+    file_changes: usize,
+    total_lines_added: i64,
+    total_lines_deleted: i64,
+    risky_path_facts: usize,
+    docs_low_risk_paths: usize,
+    changed_paths: Vec<String>,
 }
 
 impl FixtureSummary {
@@ -166,6 +189,32 @@ fn apply_fixture_event(summary: &mut FixtureSummary, value: &Value) {
                 summary.sandbox_approval_events += 1;
             }
         }
+        Some("file_change") => {
+            summary.file_changes += 1;
+            let path = value
+                .get("file_change")
+                .and_then(|file_change| file_change.get("path"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            summary.changed_paths.push(path.clone());
+            summary.total_lines_added += value
+                .get("file_change")
+                .and_then(|file_change| file_change.get("lines_added"))
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            summary.total_lines_deleted += value
+                .get("file_change")
+                .and_then(|file_change| file_change.get("lines_deleted"))
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            if is_risky_path(&path) {
+                summary.risky_path_facts += 1;
+            }
+            if is_docs_path(&path) {
+                summary.docs_low_risk_paths += 1;
+            }
+        }
         _ => {}
     }
     summary.unresolved_failures = summary.open_failures.len();
@@ -220,4 +269,15 @@ fn has_friction_signal(value: &Value) -> bool {
         .unwrap_or_default()
         .to_ascii_lowercase();
     output.contains("sandbox") || output.contains("network") || output.contains("permission")
+}
+
+fn is_risky_path(path: &str) -> bool {
+    path.starts_with(".github/workflows/")
+        || path.ends_with(".toml")
+        || path.contains("/config/")
+        || path.contains("terraform")
+}
+
+fn is_docs_path(path: &str) -> bool {
+    path.starts_with("docs/") || path.ends_with(".md")
 }
