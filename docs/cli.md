@@ -25,7 +25,7 @@ The current config stores:
 - Codex root
 - redaction defaults
 
-`prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, and derives session/message/command/approval/file-change rows.
+`prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, derives session/message/command/approval/file-change rows, and classifies supported verification commands into local proof facts.
 
 `prooflog proof --since main` detects the current git repository context and prints repo root, branch or detached HEAD label, current HEAD, merge base, dirty working tree status, changed files, diff stats, docs-only status, and relevant/ambiguous Codex sessions from local storage. It remains an explicit proof-report placeholder and does not produce the final proof report yet.
 
@@ -57,7 +57,7 @@ $HOME/.codex
 
 `prooflog doctor` will later add deeper parser diagnostics and richer git edge-case handling.
 
-`prooflog ingest --codex` will later derive proof facts from stored raw lines.
+`prooflog ingest --codex` will later add failure, risk, and resolution proof facts from stored raw lines.
 
 `prooflog proof --since main` will later produce the core proof report.
 
@@ -99,7 +99,7 @@ Strong relevant signals include:
 - command cwd inside the repo
 - file-change paths overlapping changed files
 
-Weak file-name-only overlap is reported as ambiguous rather than hidden. Missing or empty local storage reports zero relevant and ambiguous sessions without failing this placeholder proof flow. Proof-fact extraction, final proof reports, and final decision exit codes are planned follow-up work.
+Weak file-name-only overlap is reported as ambiguous rather than hidden. Missing or empty local storage reports zero relevant and ambiguous sessions without failing this placeholder proof flow. Failure resolution, final proof reports, and final decision exit codes are planned follow-up work.
 
 ## SQLite Schema
 
@@ -121,7 +121,7 @@ It also creates these FTS5 tables:
 - `messages_fts`
 - `command_output_fts`
 
-The schema is raw-first. Current ingest populates `codex_files`, `raw_events`, `sessions`, `messages`, `commands`, `approvals`, and `file_changes`; later parser work will populate the remaining derived tables.
+The schema is raw-first. Current ingest populates `codex_files`, `raw_events`, `sessions`, `messages`, `commands`, `approvals`, `file_changes`, and verification rows in `proof_facts`; later parser work will add failure, risk, and resolution facts.
 
 ## Codex Discovery
 
@@ -213,6 +213,22 @@ When available, each derived command records:
 
 Unknown command shapes and missing command strings are skipped instead of guessed. Command/output text is indexed in `command_output_fts` for internal diagnostics, but ingest does not print command output by default.
 
+## Verification Proof Facts
+
+Ingest classifies supported verification commands from derived `commands` rows and stores them in `proof_facts` with `kind = 'verification'`.
+
+Currently recognized command families include:
+
+- `cargo test`, `cargo build`, `cargo clippy`
+- `go test`, `go build`, `golangci-lint`
+- `pytest`, `ruff`
+- `npm test`, `npm run build`, `npm run lint`, `npm run typecheck`
+- `pnpm test`, `pnpm build`, `pnpm lint`, `pnpm typecheck`
+- `make test`, `make build`
+- `tsc`, `eslint`
+
+Each verification fact records the linked session, linked command, command subject, conservative status, and detector reason. Exit code `0` is `passed`; non-zero exit codes are `failed`; missing or ambiguous command outcomes are `unknown`. Unknown command families are not classified.
+
 ## Approval Derivation
 
 Ingest derives `approvals` rows from parseable approval events.
@@ -243,7 +259,7 @@ When available, each derived file change records:
 - lines added
 - lines deleted
 
-Missing optional file-change fields are stored as NULL. Missing paths and unknown file-change shapes are skipped instead of guessed. Ingest does not print raw diff text by default. Proof-fact classification, git correlation, and proof report behavior are planned follow-up work.
+Missing optional file-change fields are stored as NULL. Missing paths and unknown file-change shapes are skipped instead of guessed. Ingest does not print raw diff text by default. Failure/risk classification and proof report behavior are planned follow-up work.
 
 ## Permission Warnings
 

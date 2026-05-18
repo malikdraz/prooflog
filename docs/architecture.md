@@ -30,7 +30,7 @@ Raw events are the source of truth. Derived tables are disposable.
    - commands derived during ingest
    - approvals derived during ingest
    - file changes derived during ingest
-   - proof facts
+   - verification proof facts derived during ingest
 6. Git context and correlation
    - repo root, branch, HEAD, merge base, and dirty status detected by `prooflog proof`
    - changed files and diff stats detected by `prooflog proof`
@@ -50,7 +50,7 @@ Raw events are the source of truth. Derived tables are disposable.
 
 ## Data Model Notes
 
-The current MVP schema initializes these tables. `codex_files` is populated by discovery, `raw_events` is populated by raw ingestion, and `sessions`/`messages`/`commands`/`approvals`/`file_changes` are derived during ingest. Git context, changed files, diff stats, and session-to-repo correlation are detected at proof-command runtime. The remaining derived tables are populated by later extraction work.
+The current MVP schema initializes these tables. `codex_files` is populated by discovery, `raw_events` is populated by raw ingestion, `sessions`/`messages`/`commands`/`approvals`/`file_changes` are derived during ingest, and supported verification commands are classified into `proof_facts`. Git context, changed files, diff stats, and session-to-repo correlation are detected at proof-command runtime. Failure resolution and final decision facts are populated by later extraction work.
 
 - `codex_files`
 - `sessions`
@@ -68,4 +68,4 @@ The current MVP schema also initializes these FTS5 tables:
 - `messages_fts`
 - `command_output_fts`
 
-`raw_events_fts` is rebuilt after raw ingest. Message and command-output FTS tables are initialized for later derived extraction.
+The FTS tables are rebuilt after ingest from stored raw events, derived messages, and derived command output for internal diagnostics.

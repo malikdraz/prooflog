@@ -1325,6 +1325,152 @@ fn ingest_populates_command_output_fts_index() {
 }
 
 #[test]
+fn ingest_derives_verification_proof_facts() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("01_single_success.jsonl"),
+        include_str!("fixtures/codex/01_single_success.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let facts = proof_fact_rows(env.db_file());
+    assert_eq!(facts.len(), 1);
+    assert!(facts[0].session_id.is_some());
+    assert!(facts[0].command_id.is_some());
+    assert_eq!(facts[0].kind, "verification");
+    assert_eq!(facts[0].subject.as_deref(), Some("cargo test"));
+    assert_eq!(facts[0].status, "passed");
+    assert!(facts[0]
+        .reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("detector=cargo test")));
+    assert!(facts[0]
+        .reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("confidence=high")));
+}
+
+#[test]
+fn verification_detector_records_failed_and_unknown_statuses() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("commands.jsonl"),
+        concat!(
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:00Z\",\"session_id\":\"session-a\",\"command\":{\"cmd\":\"cargo test\",\"status\":\"failure\",\"exit_code\":101}}\n",
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:05Z\",\"session_id\":\"session-a\",\"command\":{\"cmd\":\"npm run build\"}}\n",
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:10Z\",\"session_id\":\"session-a\",\"command\":{\"cmd\":\"aws s3 ls\",\"status\":\"success\",\"exit_code\":0}}\n"
+        ),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let facts = proof_fact_rows(env.db_file());
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].subject.as_deref(), Some("cargo test"));
+    assert_eq!(facts[0].status, "failed");
+    assert_eq!(facts[1].subject.as_deref(), Some("npm run build"));
+    assert_eq!(facts[1].status, "unknown");
+}
+
+#[test]
+fn verification_detector_covers_supported_command_families() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("commands.jsonl"),
+        concat!(
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:00Z\",\"command\":{\"cmd\":\"go test ./...\",\"status\":\"success\",\"exit_code\":0}}\n",
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:01Z\",\"command\":{\"cmd\":\"pytest\",\"status\":\"success\",\"exit_code\":0}}\n",
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:02Z\",\"command\":{\"cmd\":\"pnpm lint\",\"status\":\"success\",\"exit_code\":0}}\n",
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:03Z\",\"command\":{\"cmd\":\"make build\",\"status\":\"success\",\"exit_code\":0}}\n",
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:04Z\",\"command\":{\"cmd\":\"tsc --noEmit\",\"status\":\"success\",\"exit_code\":0}}\n",
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:05Z\",\"command\":{\"cmd\":\"eslint .\",\"status\":\"success\",\"exit_code\":0}}\n"
+        ),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let subjects = proof_fact_rows(env.db_file())
+        .into_iter()
+        .filter_map(|fact| fact.subject)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        subjects,
+        vec![
+            "go test ./...",
+            "pytest",
+            "pnpm lint",
+            "make build",
+            "tsc --noEmit",
+            "eslint ."
+        ]
+    );
+}
+
+#[test]
+fn repeated_ingest_does_not_duplicate_proof_facts() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("02_fail_then_pass.jsonl"),
+        include_str!("fixtures/codex/02_fail_then_pass.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    for _ in 0..2 {
+        env.command()
+            .args([
+                "ingest",
+                "--codex",
+                "--codex-root",
+                codex_root.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+    }
+
+    assert_eq!(proof_fact_rows(env.db_file()).len(), 2);
+}
+
+#[test]
 fn ingest_derives_approvals_from_raw_events() {
     let env = CliEnv::new();
     let codex_root = env.home.path().join("codex-history");
@@ -1797,6 +1943,15 @@ struct FileChangeRow {
     lines_deleted: Option<i64>,
 }
 
+struct ProofFactRow {
+    session_id: Option<i64>,
+    command_id: Option<i64>,
+    kind: String,
+    subject: Option<String>,
+    status: String,
+    reason: Option<String>,
+}
+
 fn codex_file_rows(db_path: impl AsRef<std::path::Path>) -> Vec<CodexFileRow> {
     let conn = Connection::open(db_path).unwrap();
     let mut stmt = conn
@@ -1959,6 +2114,30 @@ fn file_change_rows(db_path: impl AsRef<std::path::Path>) -> Vec<FileChangeRow> 
             diff_text: row.get(4)?,
             lines_added: row.get(5)?,
             lines_deleted: row.get(6)?,
+        })
+    })
+    .unwrap()
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()
+}
+
+fn proof_fact_rows(db_path: impl AsRef<std::path::Path>) -> Vec<ProofFactRow> {
+    let conn = Connection::open(db_path).unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT session_id, command_id, kind, subject, status, reason
+             FROM proof_facts
+             ORDER BY id",
+        )
+        .unwrap();
+    stmt.query_map([], |row| {
+        Ok(ProofFactRow {
+            session_id: row.get(0)?,
+            command_id: row.get(1)?,
+            kind: row.get(2)?,
+            subject: row.get(3)?,
+            status: row.get(4)?,
+            reason: row.get(5)?,
         })
     })
     .unwrap()

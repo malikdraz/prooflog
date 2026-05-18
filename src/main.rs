@@ -417,6 +417,7 @@ fn discover_and_record_codex_files(conn: &mut Connection, root: &Path) -> Result
     derive_commands(&tx)?;
     derive_approvals(&tx)?;
     derive_file_changes(&tx)?;
+    derive_verification_facts(&tx)?;
     rebuild_raw_events_fts(&tx)?;
     rebuild_messages_fts(&tx)?;
     rebuild_command_output_fts(&tx)?;
@@ -1199,6 +1200,125 @@ fn extract_file_change(value: &Value) -> Option<DerivedFileChange> {
         lines_added: file_change.get("lines_added").and_then(Value::as_i64),
         lines_deleted: file_change.get("lines_deleted").and_then(Value::as_i64),
     })
+}
+
+fn derive_verification_facts(conn: &Connection) -> Result<()> {
+    conn.execute("DELETE FROM proof_facts WHERE kind = 'verification'", [])
+        .context("failed to refresh verification proof facts")?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, session_id, command, status, exit_code
+             FROM commands
+             ORDER BY id",
+        )
+        .context("failed to derive verification proof facts")?;
+    let mut rows = stmt
+        .query([])
+        .context("failed to derive verification proof facts")?;
+
+    while let Some(row) = rows
+        .next()
+        .context("failed to derive verification proof facts")?
+    {
+        let command_id: i64 = row
+            .get(0)
+            .context("failed to derive verification proof facts")?;
+        let session_id: Option<i64> = row
+            .get(1)
+            .context("failed to derive verification proof facts")?;
+        let command: String = row
+            .get(2)
+            .context("failed to derive verification proof facts")?;
+        let status: Option<String> = row
+            .get(3)
+            .context("failed to derive verification proof facts")?;
+        let exit_code: Option<i64> = row
+            .get(4)
+            .context("failed to derive verification proof facts")?;
+
+        let Some(detector) = classify_verification_command(&command) else {
+            continue;
+        };
+        let proof_status = verification_status(status.as_deref(), exit_code);
+        let reason = format!("detector={detector}; confidence=high");
+
+        conn.execute(
+            "INSERT INTO proof_facts (
+                session_id,
+                command_id,
+                kind,
+                subject,
+                status,
+                reason
+             )
+             VALUES (?1, ?2, 'verification', ?3, ?4, ?5)",
+            (
+                session_id,
+                command_id,
+                command.as_str(),
+                proof_status,
+                reason.as_str(),
+            ),
+        )
+        .context("failed to record verification proof fact")?;
+    }
+
+    Ok(())
+}
+
+fn classify_verification_command(command: &str) -> Option<&'static str> {
+    const DETECTORS: &[(&str, &str)] = &[
+        ("cargo test", "cargo test"),
+        ("cargo build", "cargo build"),
+        ("cargo clippy", "cargo clippy"),
+        ("go test", "go test"),
+        ("go build", "go build"),
+        ("golangci-lint", "golangci-lint"),
+        ("pytest", "pytest"),
+        ("ruff", "ruff"),
+        ("npm test", "npm test"),
+        ("npm run build", "npm run build"),
+        ("npm run lint", "npm run lint"),
+        ("npm run typecheck", "npm run typecheck"),
+        ("pnpm test", "pnpm test"),
+        ("pnpm build", "pnpm build"),
+        ("pnpm lint", "pnpm lint"),
+        ("pnpm typecheck", "pnpm typecheck"),
+        ("make test", "make test"),
+        ("make build", "make build"),
+        ("tsc", "tsc"),
+        ("eslint", "eslint"),
+    ];
+
+    let normalized = command.trim().to_ascii_lowercase();
+    DETECTORS
+        .iter()
+        .find(|(prefix, _)| command_has_prefix(&normalized, prefix))
+        .map(|(_, detector)| *detector)
+}
+
+fn command_has_prefix(command: &str, prefix: &str) -> bool {
+    command == prefix
+        || command
+            .strip_prefix(prefix)
+            .is_some_and(|rest| rest.starts_with(char::is_whitespace))
+}
+
+fn verification_status(status: Option<&str>, exit_code: Option<i64>) -> &'static str {
+    match exit_code {
+        Some(0) => return "passed",
+        Some(_) => return "failed",
+        None => {}
+    }
+
+    match status.map(|value| value.trim().to_ascii_lowercase()) {
+        Some(value) if matches!(value.as_str(), "success" | "passed" | "pass" | "ok") => "passed",
+        Some(value) if matches!(value.as_str(), "failure" | "failed" | "fail" | "error") => {
+            "failed"
+        }
+        _ => "unknown",
+    }
 }
 
 fn sha256_hex(text: &str) -> String {
