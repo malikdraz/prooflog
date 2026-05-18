@@ -25,7 +25,9 @@ The current config stores:
 - Codex root
 - redaction defaults
 
-`prooflog ingest --codex` and `prooflog proof --since main` are still explicit placeholders. They do not create databases, read Codex history, inspect git state, or perform network access.
+`prooflog ingest --codex` discovers local Codex `.jsonl` files and records file metadata in SQLite.
+
+`prooflog proof --since main` is still an explicit placeholder. It does not inspect git state or produce proof reports yet.
 
 ## Local Paths
 
@@ -55,7 +57,7 @@ $HOME/.codex
 
 `prooflog doctor` will later add deeper parser diagnostics and richer git edge-case handling.
 
-`prooflog ingest --codex` will discover and ingest local Codex JSONL history.
+`prooflog ingest --codex` will later store raw JSONL event lines after discovery.
 
 `prooflog proof --since main` will produce the core proof report.
 
@@ -90,6 +92,19 @@ It also creates these FTS5 tables:
 - `command_output_fts`
 
 The schema is raw-first. Later parser and ingestion work will populate it.
+
+## Codex Discovery
+
+`prooflog ingest --codex --codex-root <path>` recursively discovers lowercase `.jsonl` files under the configured root.
+
+For each discovered file, it records:
+
+- path
+- size
+- modified time
+- SHA-256 hash
+
+Repeated ingest skips unchanged files and updates changed file metadata in place. Symlinked directories are skipped to avoid loops. This command does not store raw JSONL lines yet.
 
 ## Permission Warnings
 

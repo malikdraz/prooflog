@@ -1,6 +1,6 @@
 # Demo Script
 
-This is the target first-demo flow. `init` and `doctor` are implemented; ingest and proof report generation are still planned.
+This is the target first-demo flow. `init`, `doctor`, and JSONL file discovery are implemented; raw event ingestion and proof report generation are still planned.
 
 ```bash
 cargo install --path .

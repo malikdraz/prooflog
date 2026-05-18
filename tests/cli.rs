@@ -1,9 +1,10 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use rusqlite::Connection;
+use sha2::{Digest, Sha256};
 use std::fs;
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{symlink, PermissionsExt};
 use tempfile::TempDir;
 
 #[test]
@@ -40,14 +41,7 @@ fn ingest_requires_source_flag() {
 }
 
 #[test]
-fn unimplemented_commands_are_explicit_and_non_mutating() {
-    let mut ingest = Command::cargo_bin("prooflog").unwrap();
-    ingest
-        .args(["ingest", "--codex"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("not implemented yet"));
-
+fn proof_command_is_explicitly_unimplemented() {
     let mut proof = Command::cargo_bin("prooflog").unwrap();
     proof
         .args(["proof", "--since", "main"])
@@ -313,6 +307,176 @@ fn doctor_reports_codex_jsonl_count_and_current_git_repo() {
     );
 }
 
+#[test]
+fn ingest_discovers_jsonl_files_and_records_metadata() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(codex_root.join("nested")).unwrap();
+    fs::write(codex_root.join("session-a.jsonl"), "{}\n").unwrap();
+    fs::write(
+        codex_root.join("nested").join("session-b.jsonl"),
+        "{\"x\":1}\n",
+    )
+    .unwrap();
+    fs::write(codex_root.join("ignore.txt"), "not jsonl").unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("files discovered: 2")
+                .and(predicate::str::contains("files recorded: 2"))
+                .and(predicate::str::contains("warnings: 0")),
+        );
+
+    let rows = codex_file_rows(env.db_file());
+    assert_eq!(rows.len(), 2);
+    let first = rows
+        .iter()
+        .find(|row| row.path.ends_with("session-a.jsonl"))
+        .unwrap();
+    assert_eq!(first.size_bytes, 3);
+    assert_eq!(first.sha256, sha256_hex("{}\n"));
+    assert!(!first.modified_at.is_empty());
+}
+
+#[test]
+fn repeated_ingest_skips_unchanged_and_updates_changed_files() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    let file = codex_root.join("session.jsonl");
+    fs::write(&file, "{}\n").unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("files recorded: 0")
+                .and(predicate::str::contains("files skipped: 1")),
+        );
+
+    fs::write(&file, "{\"changed\":true}\n").unwrap();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("files recorded: 1")
+                .and(predicate::str::contains("files skipped: 0")),
+        );
+
+    let rows = codex_file_rows(env.db_file());
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].sha256, sha256_hex("{\"changed\":true}\n"));
+}
+
+#[test]
+fn ingest_missing_codex_root_is_actionable_error() {
+    let env = CliEnv::new();
+    let missing_root = env.home.path().join("missing-codex");
+    env.command().arg("init").assert().success();
+
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            missing_root.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Codex root does not exist")
+                .and(predicate::str::contains(missing_root.display().to_string())),
+        );
+}
+
+#[cfg(unix)]
+#[test]
+fn ingest_skips_symlinked_directories() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    let real = codex_root.join("real");
+    let linked = codex_root.join("linked");
+    fs::create_dir_all(&real).unwrap();
+    fs::write(real.join("session.jsonl"), "{}\n").unwrap();
+    symlink(&codex_root, &linked).unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("files discovered: 1"));
+
+    assert_eq!(codex_file_rows(env.db_file()).len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn ingest_reports_and_skips_unreadable_jsonl_files() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    let readable = codex_root.join("readable.jsonl");
+    let unreadable = codex_root.join("unreadable.jsonl");
+    fs::write(&readable, "{}\n").unwrap();
+    fs::write(&unreadable, "{}\n").unwrap();
+    fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("files discovered: 1")
+                .and(predicate::str::contains("warnings: 1"))
+                .and(predicate::str::contains("could not read")),
+        );
+
+    assert_eq!(codex_file_rows(env.db_file()).len(), 1);
+}
+
 struct CliEnv {
     home: TempDir,
     config_home: TempDir,
@@ -374,4 +538,36 @@ fn user_version(conn: &Connection) -> i64 {
 #[cfg(unix)]
 fn file_mode(path: impl AsRef<std::path::Path>) -> u32 {
     fs::metadata(path).unwrap().permissions().mode() & 0o777
+}
+
+struct CodexFileRow {
+    path: String,
+    size_bytes: i64,
+    modified_at: String,
+    sha256: String,
+}
+
+fn codex_file_rows(db_path: impl AsRef<std::path::Path>) -> Vec<CodexFileRow> {
+    let conn = Connection::open(db_path).unwrap();
+    let mut stmt = conn
+        .prepare("SELECT path, size_bytes, modified_at, sha256 FROM codex_files ORDER BY path")
+        .unwrap();
+    stmt.query_map([], |row| {
+        Ok(CodexFileRow {
+            path: row.get(0)?,
+            size_bytes: row.get(1)?,
+            modified_at: row.get(2)?,
+            sha256: row.get(3)?,
+        })
+    })
+    .unwrap()
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()
+}
+
+fn sha256_hex(text: &str) -> String {
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }

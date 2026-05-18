@@ -18,6 +18,7 @@ Raw events are the source of truth. Derived tables are disposable.
    - configurable Codex root
    - recursive JSONL discovery
    - mtime and sha256 based incremental ingestion
+   - symlinked directories skipped to avoid loops
 4. Raw ingestion
    - stores every line
    - records malformed lines
@@ -50,7 +51,7 @@ Raw events are the source of truth. Derived tables are disposable.
 
 ## Data Model Notes
 
-The current MVP schema initializes these tables:
+The current MVP schema initializes these tables. `codex_files` is populated by discovery; the remaining tables are populated by later ingestion and extraction work.
 
 - `codex_files`
 - `sessions`

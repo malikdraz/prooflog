@@ -8,8 +8,9 @@ use std::{
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tracing::debug;
 use tracing_subscriber::EnvFilter;
 
@@ -33,14 +34,7 @@ fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Init(args) => init_config(args)?,
         Command::Doctor(args) => doctor_config(args)?,
-        Command::Ingest(args) => {
-            println!(
-                "prooflog ingest is not implemented yet. Planned Codex root: {}",
-                args.codex_root
-                    .as_ref()
-                    .map_or("<default>".to_string(), |path| path.display().to_string())
-            );
-        }
+        Command::Ingest(args) => ingest_codex(args)?,
         Command::Proof(args) => {
             println!(
                 "prooflog proof is not implemented yet. Planned comparison base: {}",
@@ -97,6 +91,33 @@ fn doctor_config(args: DoctorArgs) -> Result<()> {
     print_warnings(&warnings);
     println!("Status:");
     println!("  config ok");
+    Ok(())
+}
+
+fn ingest_codex(args: IngestArgs) -> Result<()> {
+    let paths = ProoflogPaths::resolve()?;
+    let config = ProoflogConfig::read(&paths.config_file)
+        .with_context(|| {
+            format!(
+                "run `prooflog init` to create {}",
+                paths.config_file.display()
+            )
+        })?
+        .with_overrides(args.db, args.codex_root);
+    let mut conn = open_existing_database(&config.db_path)
+        .with_context(|| "run `prooflog init` before ingesting Codex history")?;
+    let summary = discover_and_record_codex_files(&mut conn, &config.codex_root)?;
+
+    println!("Codex ingest:");
+    println!("  root: {}", config.codex_root.display());
+    println!("  files discovered: {}", summary.discovered);
+    println!("  files recorded: {}", summary.recorded);
+    println!("  files skipped: {}", summary.skipped);
+    println!("  warnings: {}", summary.warnings.len());
+    for warning in summary.warnings {
+        println!("  warning: {warning}");
+    }
+
     Ok(())
 }
 
@@ -180,6 +201,177 @@ struct GitStatus {
     repo_root: Option<PathBuf>,
     branch: Option<String>,
     warnings: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct IngestSummary {
+    discovered: usize,
+    recorded: usize,
+    skipped: usize,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug)]
+struct DiscoveredCodexFile {
+    path: PathBuf,
+    size_bytes: u64,
+    modified_at: String,
+    sha256: String,
+}
+
+fn discover_and_record_codex_files(conn: &mut Connection, root: &Path) -> Result<IngestSummary> {
+    if !root.exists() {
+        return Err(IngestError::MissingCodexRoot {
+            path: root.to_path_buf(),
+        })
+        .context("failed to discover Codex JSONL files");
+    }
+    if !root.is_dir() {
+        return Err(IngestError::InvalidCodexRoot {
+            path: root.to_path_buf(),
+        })
+        .context("failed to discover Codex JSONL files");
+    }
+
+    let mut summary = IngestSummary::default();
+    let mut files = Vec::new();
+    discover_jsonl_files(root, &mut files, &mut summary.warnings);
+    summary.discovered = files.len();
+
+    let tx = conn
+        .transaction()
+        .context("failed to record discovered Codex files")?;
+    for file in files {
+        if record_codex_file(&tx, &file)? {
+            summary.recorded += 1;
+        } else {
+            summary.skipped += 1;
+        }
+    }
+    tx.commit()
+        .context("failed to record discovered Codex files")?;
+
+    Ok(summary)
+}
+
+fn discover_jsonl_files(
+    root: &Path,
+    files: &mut Vec<DiscoveredCodexFile>,
+    warnings: &mut Vec<String>,
+) {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) => {
+            warnings.push(format!(
+                "could not read directory {}: {error}",
+                root.display()
+            ));
+            return;
+        }
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                warnings.push(format!(
+                    "could not read entry under {}: {error}",
+                    root.display()
+                ));
+                continue;
+            }
+        };
+        let path = entry.path();
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                warnings.push(format!(
+                    "could not inspect file type for {}: {error}",
+                    path.display()
+                ));
+                continue;
+            }
+        };
+
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            discover_jsonl_files(&path, files, warnings);
+            continue;
+        }
+        if !file_type.is_file()
+            || !path
+                .extension()
+                .is_some_and(|extension| extension == "jsonl")
+        {
+            continue;
+        }
+
+        match discover_jsonl_file(&path) {
+            Ok(file) => files.push(file),
+            Err(error) => warnings.push(error),
+        }
+    }
+}
+
+fn discover_jsonl_file(path: &Path) -> Result<DiscoveredCodexFile, String> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("could not read metadata for {}: {error}", path.display()))?;
+    let bytes =
+        fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let modified_at = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let sha256 = Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+
+    Ok(DiscoveredCodexFile {
+        path: path.to_path_buf(),
+        size_bytes: metadata.len(),
+        modified_at,
+        sha256,
+    })
+}
+
+fn record_codex_file(conn: &Connection, file: &DiscoveredCodexFile) -> Result<bool> {
+    let path = file.path.to_string_lossy().to_string();
+    let existing: Option<String> = conn
+        .query_row(
+            "SELECT sha256 FROM codex_files WHERE path = ?1",
+            [&path],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("failed to inspect existing Codex file metadata")?;
+
+    if existing.as_deref() == Some(file.sha256.as_str()) {
+        return Ok(false);
+    }
+
+    conn.execute(
+        "INSERT INTO codex_files (path, size_bytes, modified_at, sha256, ingested_at)
+         VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+         ON CONFLICT(path) DO UPDATE SET
+           size_bytes = excluded.size_bytes,
+           modified_at = excluded.modified_at,
+           sha256 = excluded.sha256,
+           ingested_at = CURRENT_TIMESTAMP",
+        (
+            &path,
+            file.size_bytes as i64,
+            &file.modified_at,
+            &file.sha256,
+        ),
+    )
+    .context("failed to record Codex file metadata")?;
+
+    Ok(true)
 }
 
 fn inspect_codex(root: &Path) -> CodexStatus {
@@ -780,6 +972,14 @@ enum PermissionError {
         path: PathBuf,
         source: std::io::Error,
     },
+}
+
+#[derive(Debug, thiserror::Error)]
+enum IngestError {
+    #[error("Codex root does not exist: {path}")]
+    MissingCodexRoot { path: PathBuf },
+    #[error("Codex root is not a directory: {path}")]
+    InvalidCodexRoot { path: PathBuf },
 }
 
 #[derive(Debug, Parser)]
