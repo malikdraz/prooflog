@@ -1,0 +1,68 @@
+# Repository Instructions
+
+## Scope
+
+This repo is the ProofLog project. The current repository state is documentation-only. Do not start implementation unless the user explicitly asks for implementation work.
+
+## Project Context
+
+- Core command: `prooflog proof --since main`
+- Local docs under `docs/` define the public project direction.
+
+Use the repo-local docs as the source of truth for public project direction unless the user gives newer requirements.
+
+## Product Boundary
+
+ProofLog is a local-first Rust + SQLite CLI that reads local Codex JSONL plus git state and emits proof reports for senior engineers.
+
+In scope for MVP:
+
+- Codex JSONL ingestion
+- Raw-first storage
+- Parser fixtures from real Codex traces
+- Git correlation
+- Verification, failure, and risk classification
+- Plain text and Markdown reports
+- Useful exit codes
+- Local privacy and redaction
+
+Out of scope before the adoption test:
+
+- Dashboard
+- Tauri UI
+- Cloud sync
+- Multi-agent support
+- Semantic search
+- Embeddings
+- AGENTS.md generation
+- Launching or controlling Codex
+
+## Implementation Guardrails
+
+- Prefer UNKNOWN over false READY.
+- Preserve raw events; derived tables are disposable.
+- Add or update fixtures before changing parser behavior.
+- Keep storage local by default.
+- Do not print secrets or raw transcript content in reports by default.
+- Every feature must improve `prooflog proof --since main`.
+
+## Documentation Workflow
+
+For documentation-only tasks:
+
+- Keep product requirements in `docs/prd.md`.
+- Keep architectural decisions in `docs/architecture.md`.
+- Keep milestone and issue sequencing in `docs/roadmap.md`.
+- Keep risk handling in `docs/risks.md`.
+
+## Done Criteria
+
+For implementation work, a task is not done unless:
+
+- Code compiles.
+- Tests pass.
+- Parser changes have fixture coverage.
+- Output is deterministic.
+- CLI behavior changes are documented.
+- Privacy impact has been considered.
+- The change does not expand into dashboard-only behavior.
