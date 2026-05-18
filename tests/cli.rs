@@ -332,7 +332,7 @@ fn ingest_discovers_jsonl_files_and_records_metadata() {
         .success()
         .stdout(
             predicate::str::contains("files discovered: 2")
-                .and(predicate::str::contains("files recorded: 2"))
+                .and(predicate::str::contains("files ingested: 2"))
                 .and(predicate::str::contains("warnings: 0")),
         );
 
@@ -375,7 +375,7 @@ fn repeated_ingest_skips_unchanged_and_updates_changed_files() {
         .assert()
         .success()
         .stdout(
-            predicate::str::contains("files recorded: 0")
+            predicate::str::contains("files ingested: 0")
                 .and(predicate::str::contains("files skipped: 1")),
         );
 
@@ -390,7 +390,7 @@ fn repeated_ingest_skips_unchanged_and_updates_changed_files() {
         .assert()
         .success()
         .stdout(
-            predicate::str::contains("files recorded: 1")
+            predicate::str::contains("files ingested: 1")
                 .and(predicate::str::contains("files skipped: 0")),
         );
 
@@ -446,6 +446,40 @@ fn ingest_stores_raw_jsonl_lines_and_parse_metadata() {
     assert_eq!(rows[2].line_number, 3);
     assert_eq!(rows[2].raw_json, "not json");
     assert!(rows[2].parse_error.as_deref().unwrap().contains("expected"));
+}
+
+#[test]
+fn ingest_summary_reports_mixed_raw_event_counts_without_warning_details_when_clean() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("session.jsonl"),
+        "{\"type\":\"message\"}\n{\"unknown\":true}\nnot json\n\n",
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("files discovered: 1")
+                .and(predicate::str::contains("files ingested: 1"))
+                .and(predicate::str::contains("files skipped: 0"))
+                .and(predicate::str::contains("raw events stored: 3"))
+                .and(predicate::str::contains("raw events skipped: 1"))
+                .and(predicate::str::contains("malformed lines: 1"))
+                .and(predicate::str::contains("unknown event shapes: 1"))
+                .and(predicate::str::contains("warnings: 0"))
+                .and(predicate::str::contains("Warnings:").not()),
+        );
 }
 
 #[test]
@@ -731,6 +765,7 @@ fn ingest_reports_and_skips_unreadable_jsonl_files() {
         .stdout(
             predicate::str::contains("files discovered: 1")
                 .and(predicate::str::contains("warnings: 1"))
+                .and(predicate::str::contains("Warnings:"))
                 .and(predicate::str::contains("could not read")),
         );
 

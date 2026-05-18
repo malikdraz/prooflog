@@ -115,14 +115,18 @@ fn ingest_codex(args: IngestArgs) -> Result<()> {
     println!("Codex ingest:");
     println!("  root: {}", config.codex_root.display());
     println!("  files discovered: {}", summary.discovered);
-    println!("  files recorded: {}", summary.recorded);
+    println!("  files ingested: {}", summary.recorded);
     println!("  files skipped: {}", summary.skipped);
     println!("  raw events stored: {}", summary.raw_events_stored);
     println!("  raw events skipped: {}", summary.raw_events_skipped);
     println!("  malformed lines: {}", summary.malformed_lines);
+    println!("  unknown event shapes: {}", summary.unknown_event_shapes);
     println!("  warnings: {}", summary.warnings.len());
-    for warning in summary.warnings {
-        println!("  warning: {warning}");
+    if !summary.warnings.is_empty() {
+        println!("Warnings:");
+        for warning in summary.warnings {
+            println!("  {warning}");
+        }
     }
 
     Ok(())
@@ -218,6 +222,7 @@ struct IngestSummary {
     raw_events_stored: usize,
     raw_events_skipped: usize,
     malformed_lines: usize,
+    unknown_event_shapes: usize,
     warnings: Vec<String>,
 }
 
@@ -453,6 +458,8 @@ fn record_raw_events(
         let event = parse_raw_event_line(line_number, raw_json);
         if event.parse_error.is_some() {
             summary.malformed_lines += 1;
+        } else if event.event_type.is_none() {
+            summary.unknown_event_shapes += 1;
         }
         if upsert_raw_event(conn, codex_file_id, &event)? {
             summary.raw_events_stored += 1;

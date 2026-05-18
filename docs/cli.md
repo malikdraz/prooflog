@@ -122,7 +122,18 @@ Each raw event row records:
 
 Malformed JSON lines do not abort ingest. Unknown valid JSON shapes are preserved with NULL derived metadata. Empty lines are skipped and counted in ingest output.
 
-Current ingest output includes file discovery counts, raw event stored/skipped counts, malformed-line count, and grouped warnings. After ingest, `raw_events_fts` is rebuilt from stored raw events for internal diagnostics. This is not a user-facing search command, and derived parser extraction remains planned follow-up work.
+Current ingest output includes:
+
+- files discovered
+- files ingested
+- files skipped
+- raw events stored
+- raw events skipped
+- malformed lines
+- unknown event shapes
+- warning count
+
+Warning details are grouped under `Warnings:` only when present. After ingest, `raw_events_fts` is rebuilt from stored raw events for internal diagnostics. This is not a user-facing search command, and derived parser extraction remains planned follow-up work.
 
 ## Permission Warnings
 
