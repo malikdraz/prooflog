@@ -37,6 +37,8 @@ cargo install --path .
 
 Requires a stable Rust toolchain and local access to the Codex JSONL history you want to inspect.
 
+See the [installation guide](docs/installation.md) for OS assumptions, path overrides, and troubleshooting.
+
 ## Quickstart
 
 ```bash
@@ -162,6 +164,7 @@ ProofLog is not:
 ## Project Docs
 
 - [Documentation index](docs/README.md)
+- [Installation guide](docs/installation.md)
 - [CLI behavior](docs/cli.md)
 - [Product requirements](docs/prd.md)
 - [Architecture notes](docs/architecture.md)

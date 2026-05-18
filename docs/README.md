@@ -8,10 +8,11 @@ This directory is the repo-local starting point for ProofLog context.
 2. [Architecture](architecture.md)
 3. [Roadmap](roadmap.md)
 4. [CLI behavior](cli.md)
-5. [Parser fixtures](parser-fixtures.md)
-6. [Risk register](risks.md)
-7. [Operating model](operating-model.md)
-8. [Demo script](demo.md)
+5. [Installation](installation.md)
+6. [Parser fixtures](parser-fixtures.md)
+7. [Risk register](risks.md)
+8. [Operating model](operating-model.md)
+9. [Demo script](demo.md)
 
 ## Current Repository State
 
