@@ -27,7 +27,7 @@ The current config stores:
 
 `prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, derives session/message/command/approval/file-change rows, and classifies supported verification, failure, and failure-resolution evidence into local proof facts.
 
-`prooflog proof --since main` detects the current git repository context and prints repo root, branch or detached HEAD label, current HEAD, merge base, dirty working tree status, changed files, diff stats, docs-only status, and relevant/ambiguous Codex sessions from local storage. It remains an explicit proof-report placeholder and does not produce the final proof report yet.
+`prooflog proof --since main` detects the current git repository context and prints repo root, branch or detached HEAD label, current HEAD, merge base, dirty working tree status, changed files, diff stats, docs-only status, risky changed paths, and relevant/ambiguous Codex sessions from local storage. It remains an explicit proof-report placeholder and does not produce the final proof report yet.
 
 ## Local Paths
 
@@ -57,7 +57,7 @@ $HOME/.codex
 
 `prooflog doctor` will later add deeper parser diagnostics and richer git edge-case handling.
 
-`prooflog ingest --codex` will later add risk proof facts from stored raw lines.
+`prooflog ingest --codex` will later add additional proof facts as report needs harden.
 
 `prooflog proof --since main` will later produce the core proof report.
 
@@ -86,8 +86,31 @@ It prints:
 - total additions and deletions
 - docs-only status
 - per-file status, path, additions, and deletions
+- risky path level, count, categories, and reasons
 
 Use `--repo <PATH>` to inspect a repository other than the current working directory. Running outside a git repository or passing an invalid base ref fails with an actionable error.
+
+## Risk Path Classification
+
+`prooflog proof --since <REF>` prints a `Risk:` section based on changed file paths.
+
+Current path categories are:
+
+- auth
+- identity
+- security
+- secrets
+- config
+- infra
+- migration
+- CI/CD
+- production
+- Kubernetes
+- Terraform
+- database
+- release
+
+Docs-only changes are reported as `risk level: low` with zero risky files. Mixed non-doc changes are `risk level: elevated` when any changed path matches a category. The classifier is deterministic and path-based; it does not inspect file contents or make a final readiness decision.
 
 ## Codex Session Correlation
 
@@ -283,7 +306,7 @@ When available, each derived file change records:
 - lines added
 - lines deleted
 
-Missing optional file-change fields are stored as NULL. Missing paths and unknown file-change shapes are skipped instead of guessed. Ingest does not print raw diff text by default. Risk classification, final decisions, and proof report behavior are planned follow-up work.
+Missing optional file-change fields are stored as NULL. Missing paths and unknown file-change shapes are skipped instead of guessed. Ingest does not print raw diff text by default. Final decisions and proof report behavior are planned follow-up work.
 
 ## Permission Warnings
 

@@ -168,6 +168,100 @@ fn proof_reports_docs_only_changes() {
 }
 
 #[test]
+fn proof_reports_risky_changed_paths() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join(".github").join("workflows")).unwrap();
+    fs::create_dir_all(repo.join("k8s")).unwrap();
+    fs::create_dir_all(repo.join("terraform")).unwrap();
+    fs::create_dir_all(repo.join("db").join("migrations")).unwrap();
+    fs::create_dir_all(repo.join("src").join("auth")).unwrap();
+    fs::write(repo.join(".github/workflows/ci.yml"), "ci\n").unwrap();
+    fs::write(repo.join("k8s/deployment.yaml"), "deployment\n").unwrap();
+    fs::write(repo.join("terraform/main.tf"), "resource\n").unwrap();
+    fs::write(repo.join("db/migrations/001.sql"), "select 1;\n").unwrap();
+    fs::write(
+        repo.join("src/auth/config.rs"),
+        "pub const X: &str = \"x\";\n",
+    )
+    .unwrap();
+    git(
+        &repo,
+        [
+            "add",
+            ".github/workflows/ci.yml",
+            "k8s/deployment.yaml",
+            "terraform/main.tf",
+            "db/migrations/001.sql",
+            "src/auth/config.rs",
+        ],
+    );
+    git(&repo, ["commit", "-m", "risky paths"]);
+
+    env.command_in(&repo)
+        .args(["proof", "--since", "main~1"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Risk:")
+                .and(predicate::str::contains("risk level: elevated"))
+                .and(predicate::str::contains("risky files: 5"))
+                .and(predicate::str::contains("CI/CD: .github/workflows/ci.yml"))
+                .and(predicate::str::contains("Kubernetes: k8s/deployment.yaml"))
+                .and(predicate::str::contains("Terraform: terraform/main.tf"))
+                .and(predicate::str::contains("database: db/migrations/001.sql"))
+                .and(predicate::str::contains("auth: src/auth/config.rs"))
+                .and(predicate::str::contains("config: src/auth/config.rs")),
+        );
+}
+
+#[test]
+fn proof_reports_docs_only_changes_as_low_risk() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("docs")).unwrap();
+    fs::write(repo.join("docs").join("security.md"), "security docs\n").unwrap();
+    git(&repo, ["add", "docs/security.md"]);
+    git(&repo, ["commit", "-m", "docs"]);
+
+    env.command_in(&repo)
+        .args(["proof", "--since", "main~1"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Risk:")
+                .and(predicate::str::contains("risk level: low"))
+                .and(predicate::str::contains("risky files: 0"))
+                .and(predicate::str::contains("elevated").not()),
+        );
+}
+
+#[test]
+fn proof_reports_multiple_risk_categories_for_one_path() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("infra").join("prod")).unwrap();
+    fs::write(repo.join("infra/prod/secrets.tf"), "resource\n").unwrap();
+    git(&repo, ["add", "infra/prod/secrets.tf"]);
+    git(&repo, ["commit", "-m", "infra secret"]);
+
+    env.command_in(&repo)
+        .args(["proof", "--since", "main~1"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Risk:")
+                .and(predicate::str::contains("risky files: 1"))
+                .and(predicate::str::contains("secrets: infra/prod/secrets.tf"))
+                .and(predicate::str::contains("infra: infra/prod/secrets.tf"))
+                .and(predicate::str::contains(
+                    "production: infra/prod/secrets.tf",
+                ))
+                .and(predicate::str::contains("Terraform: infra/prod/secrets.tf")),
+        );
+}
+
+#[test]
 fn proof_reports_deleted_and_renamed_files() {
     let env = CliEnv::new();
     let repo = init_git_repo(env.home.path().join("repo"));

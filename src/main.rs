@@ -145,6 +145,8 @@ fn proof_git_context(args: ProofArgs) -> Result<()> {
     println!("  merge base: {}", git.merge_base);
     println!("  dirty: {}", if git.dirty { "yes" } else { "no" });
     print_changed_files(&changed);
+    let risk = classify_changed_risks(&changed);
+    print_risk_report(&risk);
     print_session_correlation(&correlation);
     println!("Proof:");
     println!("  since: {since}");
@@ -179,6 +181,18 @@ fn print_changed_files(changed: &ChangedFiles) {
             file.display_path(),
             display_stat(file.additions),
             display_stat(file.deletions)
+        );
+    }
+}
+
+fn print_risk_report(risk: &RiskReport) {
+    println!("Risk:");
+    println!("  risk level: {}", risk.level);
+    println!("  risky files: {}", risk.risky_file_count);
+    for finding in &risk.findings {
+        println!(
+            "  {}: {} ({})",
+            finding.category, finding.path, finding.reason
         );
     }
 }
@@ -320,6 +334,20 @@ impl ChangedFile {
             None => self.path.clone(),
         }
     }
+}
+
+#[derive(Debug)]
+struct RiskReport {
+    level: &'static str,
+    risky_file_count: usize,
+    findings: Vec<RiskFinding>,
+}
+
+#[derive(Debug)]
+struct RiskFinding {
+    category: &'static str,
+    path: String,
+    reason: &'static str,
 }
 
 #[derive(Debug, Default)]
@@ -1854,6 +1882,241 @@ fn display_stat(value: Option<i64>) -> String {
 
 fn is_docs_path(path: &str) -> bool {
     path == "README.md" || path == "AGENTS.md" || path.starts_with("docs/") || path.ends_with(".md")
+}
+
+fn classify_changed_risks(changed: &ChangedFiles) -> RiskReport {
+    if changed.docs_only {
+        return RiskReport {
+            level: "low",
+            risky_file_count: 0,
+            findings: Vec::new(),
+        };
+    }
+
+    let mut risky_files = BTreeSet::new();
+    let mut findings = Vec::new();
+    for file in &changed.files {
+        if is_docs_path(&file.path) {
+            continue;
+        }
+        let display_path = file.display_path();
+        let paths = file.risk_paths();
+        for rule in RISK_RULES {
+            if paths.iter().any(|path| rule.matches(path)) {
+                risky_files.insert(display_path.clone());
+                findings.push(RiskFinding {
+                    category: rule.category,
+                    path: display_path.clone(),
+                    reason: rule.reason,
+                });
+            }
+        }
+    }
+
+    RiskReport {
+        level: if risky_files.is_empty() {
+            "low"
+        } else {
+            "elevated"
+        },
+        risky_file_count: risky_files.len(),
+        findings,
+    }
+}
+
+impl ChangedFile {
+    fn risk_paths(&self) -> Vec<&str> {
+        let mut paths = vec![self.path.as_str()];
+        if let Some(previous_path) = &self.previous_path {
+            paths.push(previous_path.as_str());
+        }
+        paths
+    }
+}
+
+struct RiskRule {
+    category: &'static str,
+    reason: &'static str,
+    matches: fn(&str) -> bool,
+}
+
+impl RiskRule {
+    fn matches(&self, path: &str) -> bool {
+        (self.matches)(path)
+    }
+}
+
+const RISK_RULES: &[RiskRule] = &[
+    RiskRule {
+        category: "auth",
+        reason: "authentication path",
+        matches: risk_auth,
+    },
+    RiskRule {
+        category: "identity",
+        reason: "identity path",
+        matches: risk_identity,
+    },
+    RiskRule {
+        category: "security",
+        reason: "security path",
+        matches: risk_security,
+    },
+    RiskRule {
+        category: "secrets",
+        reason: "secret-like path",
+        matches: risk_secrets,
+    },
+    RiskRule {
+        category: "config",
+        reason: "configuration path",
+        matches: risk_config,
+    },
+    RiskRule {
+        category: "infra",
+        reason: "infrastructure path",
+        matches: risk_infra,
+    },
+    RiskRule {
+        category: "migration",
+        reason: "migration path",
+        matches: risk_migration,
+    },
+    RiskRule {
+        category: "CI/CD",
+        reason: "automation workflow path",
+        matches: risk_cicd,
+    },
+    RiskRule {
+        category: "production",
+        reason: "production path",
+        matches: risk_production,
+    },
+    RiskRule {
+        category: "Kubernetes",
+        reason: "Kubernetes path",
+        matches: risk_kubernetes,
+    },
+    RiskRule {
+        category: "Terraform",
+        reason: "Terraform path",
+        matches: risk_terraform,
+    },
+    RiskRule {
+        category: "database",
+        reason: "database path",
+        matches: risk_database,
+    },
+    RiskRule {
+        category: "release",
+        reason: "release path",
+        matches: risk_release,
+    },
+];
+
+fn risk_auth(path: &str) -> bool {
+    path_has_segment(path, "auth") || path_contains_any(path, &["oauth", "login"])
+}
+
+fn risk_identity(path: &str) -> bool {
+    path_has_segment(path, "identity") || path_contains_any(path, &["iam", "oidc", "sso"])
+}
+
+fn risk_security(path: &str) -> bool {
+    path_has_segment(path, "security") || path_contains_any(path, &["rbac", "policy"])
+}
+
+fn risk_secrets(path: &str) -> bool {
+    let lower = normalized_path(path);
+    lower == ".env"
+        || lower.ends_with("/.env")
+        || path_contains_any(path, &["secret", "secrets", "credential", "private_key"])
+}
+
+fn risk_config(path: &str) -> bool {
+    let lower = normalized_path(path);
+    path_contains_any(path, &["config", "settings"])
+        || lower == ".env"
+        || lower.ends_with("/.env")
+        || lower == ".cargo/config.toml"
+}
+
+fn risk_infra(path: &str) -> bool {
+    path_has_segment(path, "infra")
+        || path_has_segment(path, "infrastructure")
+        || path_contains_any(
+            path,
+            &[
+                "dockerfile",
+                "docker-compose",
+                ".github/workflows",
+                "terraform/",
+                "k8s/",
+                "helm/",
+                "charts/",
+            ],
+        )
+}
+
+fn risk_migration(path: &str) -> bool {
+    path_contains_any(path, &["migration", "migrations"])
+}
+
+fn risk_cicd(path: &str) -> bool {
+    path_contains_any(
+        path,
+        &[
+            ".github/workflows",
+            ".gitlab-ci",
+            "azure-pipelines",
+            "jenkinsfile",
+        ],
+    )
+}
+
+fn risk_production(path: &str) -> bool {
+    path_has_segment(path, "prod")
+        || path_has_segment(path, "production")
+        || path_contains_any(path, &["-prod", "production"])
+}
+
+fn risk_kubernetes(path: &str) -> bool {
+    path_contains_any(
+        path,
+        &["k8s/", "kubernetes", "helm/", "charts/", "deployment.yaml"],
+    )
+}
+
+fn risk_terraform(path: &str) -> bool {
+    let lower = normalized_path(path);
+    lower.ends_with(".tf") || path_contains_any(path, &["terraform/"])
+}
+
+fn risk_database(path: &str) -> bool {
+    let lower = normalized_path(path);
+    path_has_segment(path, "db")
+        || path_has_segment(path, "database")
+        || path_contains_any(path, &["migrations", "schema"])
+        || lower.ends_with(".sql")
+}
+
+fn risk_release(path: &str) -> bool {
+    path_has_segment(path, "release")
+        || path_has_segment(path, "releases")
+        || path_contains_any(path, &["release"])
+}
+
+fn path_has_segment(path: &str, segment: &str) -> bool {
+    normalized_path(path).split('/').any(|part| part == segment)
+}
+
+fn path_contains_any(path: &str, needles: &[&str]) -> bool {
+    let lower = normalized_path(path);
+    needles.iter().any(|needle| lower.contains(needle))
+}
+
+fn normalized_path(path: &str) -> String {
+    path.replace('\\', "/").to_ascii_lowercase()
 }
 
 fn correlate_sessions(
