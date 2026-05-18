@@ -318,7 +318,9 @@ fn print_markdown_session(kind: &str, session: &CorrelatedSession) {
         "| {} | {} | {} | {} |",
         kind,
         md_cell(&session.codex_session_id),
-        md_cell(session.title.as_deref().unwrap_or("(untitled)")),
+        md_cell(report_text(
+            session.title.as_deref().unwrap_or("(untitled)")
+        )),
         md_cell(session.signals.join(", "))
     );
 }
@@ -375,7 +377,9 @@ fn print_markdown_verification(facts: &[DecisionFact]) {
                 "| {} | {} | {} |",
                 md_cell(&fact.status),
                 md_cell(&fact.codex_session_id),
-                md_cell(fact.subject.as_deref().unwrap_or("(unknown verification)"))
+                md_cell(report_text(
+                    fact.subject.as_deref().unwrap_or("(unknown verification)")
+                ))
             );
         }
     }
@@ -422,7 +426,9 @@ fn print_markdown_failures(facts: &[DecisionFact]) {
                 "| {} | {} | {} |",
                 md_cell(&fact.status),
                 md_cell(&fact.codex_session_id),
-                md_cell(fact.subject.as_deref().unwrap_or("(unknown verification)"))
+                md_cell(report_text(
+                    fact.subject.as_deref().unwrap_or("(unknown verification)")
+                ))
             );
         }
     }
@@ -479,8 +485,8 @@ fn print_markdown_risky_command(scope: &str, finding: &RiskyCommandFinding) {
         md_cell(finding.severity),
         md_cell(finding.family),
         md_cell(&finding.codex_session_id),
-        md_cell(&finding.command),
-        md_cell(finding.reason)
+        md_cell(report_text(&finding.command)),
+        md_cell(report_text(finding.reason))
     );
 }
 
@@ -530,7 +536,7 @@ fn print_json_report(report: ProofReport<'_>) -> Result<()> {
         },
         "decision": {
             "status": report.decision.status,
-            "reasons": report.decision.reasons,
+            "reasons": report.decision.reasons.iter().map(|reason| report_text(reason)).collect::<Vec<_>>(),
         },
         "next_actions": [next_step(report.decision)],
     });
@@ -552,7 +558,7 @@ fn json_changed_file(file: &ChangedFile) -> Value {
 fn json_correlated_session(session: &CorrelatedSession) -> Value {
     json!({
         "id": session.codex_session_id,
-        "title": session.title,
+        "title": session.title.as_deref().map(report_text),
         "signals": session.signals,
     })
 }
@@ -589,7 +595,7 @@ fn json_fact(fact: &DecisionFact) -> Value {
     json!({
         "session_id": fact.codex_session_id,
         "kind": fact.kind,
-        "subject": fact.subject,
+        "subject": fact.subject.as_deref().map(report_text),
         "status": fact.status,
     })
 }
@@ -605,11 +611,11 @@ fn json_risk_finding(finding: &RiskFinding) -> Value {
 fn json_risky_command(finding: &RiskyCommandFinding) -> Value {
     json!({
         "session_id": finding.codex_session_id,
-        "session_title": finding.session_title,
+        "session_title": finding.session_title.as_deref().map(report_text),
         "family": finding.family,
         "severity": finding.severity,
-        "reason": finding.reason,
-        "command": finding.command,
+        "reason": report_text(finding.reason),
+        "command": report_text(&finding.command),
     })
 }
 
@@ -618,6 +624,75 @@ fn md_cell(value: impl std::fmt::Display) -> String {
         .to_string()
         .replace('|', "\\|")
         .replace(['\n', '\r'], " ")
+}
+
+fn report_text(value: &str) -> String {
+    redact_secret_like_values(value)
+}
+
+fn redact_secret_like_values(value: &str) -> String {
+    let mut redacted = redact_bearer_tokens(value);
+    for prefix in ["sk-proj-", "sk-", "AKIA", "ASIA"] {
+        redacted = redact_prefixed_token(&redacted, prefix);
+    }
+    for marker in [
+        format!("-----BEGIN {}-----", "PRIVATE KEY"),
+        format!("-----BEGIN {}-----", "RSA PRIVATE KEY"),
+        format!("-----BEGIN {}-----", "OPENSSH PRIVATE KEY"),
+    ] {
+        redacted = redacted.replace(&marker, "[REDACTED_SECRET]");
+    }
+    redacted
+}
+
+fn redact_bearer_tokens(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut remaining = value;
+    while let Some(index) = remaining.find("Bearer ") {
+        output.push_str(&remaining[..index]);
+        output.push_str("Bearer ");
+        let token_start = index + "Bearer ".len();
+        let token_end = token_start + secret_token_len(&remaining[token_start..]);
+        if token_end > token_start {
+            output.push_str("[REDACTED_SECRET]");
+            remaining = &remaining[token_end..];
+        } else {
+            remaining = &remaining[token_start..];
+        }
+    }
+    output.push_str(remaining);
+    output
+}
+
+fn redact_prefixed_token(value: &str, prefix: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut remaining = value;
+    while let Some(index) = remaining.find(prefix) {
+        output.push_str(&remaining[..index]);
+        let token_len = prefix.len() + secret_token_len(&remaining[index + prefix.len()..]);
+        if token_len > prefix.len() + 8 {
+            output.push_str("[REDACTED_SECRET]");
+            remaining = &remaining[index + token_len..];
+        } else {
+            output.push_str(prefix);
+            remaining = &remaining[index + prefix.len()..];
+        }
+    }
+    output.push_str(remaining);
+    output
+}
+
+fn secret_token_len(value: &str) -> usize {
+    value
+        .char_indices()
+        .find(|(_, character)| !is_secret_token_character(*character))
+        .map(|(index, _)| index)
+        .unwrap_or(value.len())
+}
+
+fn is_secret_token_character(character: char) -> bool {
+    character.is_ascii_alphanumeric()
+        || matches!(character, '-' | '_' | '.' | '/' | '+' | '=' | ':' | '~')
 }
 
 fn print_report_scope(since: &str, git: &ProofGitContext) {
@@ -672,10 +747,10 @@ fn print_risky_commands(report: &RiskyCommandReport) {
             finding.severity,
             finding.family,
             finding.codex_session_id,
-            finding.session_title.as_deref().unwrap_or("(untitled)"),
-            finding.command
+            report_text(finding.session_title.as_deref().unwrap_or("(untitled)")),
+            report_text(&finding.command)
         );
-        println!("    reason: {}", finding.reason);
+        println!("    reason: {}", report_text(finding.reason));
     }
     for finding in &report.ambiguous {
         println!(
@@ -683,10 +758,10 @@ fn print_risky_commands(report: &RiskyCommandReport) {
             finding.severity,
             finding.family,
             finding.codex_session_id,
-            finding.session_title.as_deref().unwrap_or("(untitled)"),
-            finding.command
+            report_text(finding.session_title.as_deref().unwrap_or("(untitled)")),
+            report_text(&finding.command)
         );
-        println!("    reason: {}", finding.reason);
+        println!("    reason: {}", report_text(finding.reason));
     }
 }
 
@@ -738,7 +813,7 @@ fn print_verification_report(facts: &[DecisionFact]) {
             "  {} {} {}",
             fact.status,
             fact.codex_session_id,
-            fact.subject.as_deref().unwrap_or("(unknown verification)")
+            report_text(fact.subject.as_deref().unwrap_or("(unknown verification)"))
         );
     }
 }
@@ -776,7 +851,7 @@ fn print_failures_report(facts: &[DecisionFact]) {
             "  {} {} {}",
             fact.status,
             fact.codex_session_id,
-            fact.subject.as_deref().unwrap_or("(unknown verification)")
+            report_text(fact.subject.as_deref().unwrap_or("(unknown verification)"))
         );
     }
 }
@@ -789,7 +864,7 @@ fn print_session_correlation(correlation: &SessionCorrelation) {
         println!(
             "  {} {} [{}]",
             session.codex_session_id,
-            session.title.as_deref().unwrap_or("(untitled)"),
+            report_text(session.title.as_deref().unwrap_or("(untitled)")),
             session.signals.join(", ")
         );
     }
@@ -797,7 +872,7 @@ fn print_session_correlation(correlation: &SessionCorrelation) {
         println!(
             "  {} {} [{}]",
             session.codex_session_id,
-            session.title.as_deref().unwrap_or("(untitled)"),
+            report_text(session.title.as_deref().unwrap_or("(untitled)")),
             session.signals.join(", ")
         );
     }
@@ -807,14 +882,14 @@ fn print_proof_decision(decision: &ProofDecision) {
     println!("Decision:");
     println!("  status: {}", decision.status);
     for reason in &decision.reasons {
-        println!("  reason: {reason}");
+        println!("  reason: {}", report_text(reason));
     }
 }
 
 fn print_why(decision: &ProofDecision) {
     println!("Why:");
     for reason in &decision.reasons {
-        println!("  reason: {reason}");
+        println!("  reason: {}", report_text(reason));
     }
 }
 

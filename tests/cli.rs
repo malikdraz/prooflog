@@ -247,6 +247,87 @@ fn proof_reports_parser_warning_counts_without_raw_events() {
 }
 
 #[test]
+fn proof_redacts_report_secrets_but_preserves_raw_command() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    git(&repo, ["add", "src/main.rs"]);
+    git(&repo, ["commit", "-m", "add code"]);
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    let repo_root = repo.canonicalize().unwrap();
+    let openai_key = "sk-proj-abcdefghijklmnopqrstuvwxyz1234567890";
+    let bearer = "Bearer bearerSECRET1234567890";
+    let command = format!("cargo test -- --api-key {openai_key} --header '{bearer}'");
+    fs::write(
+        codex_root.join("secret-command.jsonl"),
+        format!(
+            "{{\"type\":\"session_meta\",\"timestamp\":\"2026-05-18T16:30:00Z\",\"session_id\":\"session-secret\",\"workspace_path\":\"{}\",\"title\":\"Secret report\"}}\n\
+             {{\"type\":\"command\",\"timestamp\":\"2026-05-18T16:30:05Z\",\"session_id\":\"session-secret\",\"command\":{{\"cmd\":\"{}\",\"cwd\":\"{}\",\"status\":\"success\",\"exit_code\":0,\"output\":\"ok\"}}}}\n",
+            repo_root.display(),
+            command,
+            repo_root.display()
+        ),
+    )
+    .unwrap();
+
+    env.command()
+        .args(["init", "--codex-root", codex_root.to_str().unwrap()])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let rows = command_rows(env.db_file());
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].command.contains(openai_key));
+    assert!(rows[0].command.contains(bearer));
+
+    env.command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--db",
+            env.db_file().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("[REDACTED_SECRET]")
+                .and(predicate::str::contains(openai_key).not())
+                .and(predicate::str::contains(bearer).not()),
+        );
+
+    let output = env
+        .command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--format",
+            "json",
+            "--db",
+            env.db_file().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("[REDACTED_SECRET]"));
+    assert!(!stdout.contains(openai_key));
+    assert!(!stdout.contains(bearer));
+}
+
+#[test]
 fn proof_markdown_format_is_snapshot_covered() {
     let env = CliEnv::new();
     let repo = init_git_repo(env.home.path().join("repo"));

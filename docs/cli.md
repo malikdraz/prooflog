@@ -27,7 +27,7 @@ The current config stores:
 
 `prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, derives session/message/command/approval/file-change rows, and classifies supported verification, failure, and failure-resolution evidence into local proof facts.
 
-`prooflog proof --since main` emits a proof report with scope, changed files, Codex evidence, parser warning counts, verification, failures, risks, a conservative READY/NOT READY/UNKNOWN decision, why, and next steps. The default output is plain text. Use `--format md` for a PR-pasteable Markdown report, `--format json` for experimental machine-readable output, or `--format text` to request plain text explicitly.
+`prooflog proof --since main` emits a proof report with scope, changed files, Codex evidence, parser warning counts, verification, failures, risks, redacted report excerpts for obvious secrets, a conservative READY/NOT READY/UNKNOWN decision, why, and next steps. The default output is plain text. Use `--format md` for a PR-pasteable Markdown report, `--format json` for experimental machine-readable output, or `--format text` to request plain text explicitly.
 
 ## Local Paths
 
@@ -158,6 +158,12 @@ Parser warnings include:
 - unknown event shapes
 
 These warnings are counts only. Proof reports do not print raw JSONL content, parse error text, raw transcript text, local source file paths, or command output by default. Missing or empty local storage reports zero parser warnings.
+
+## Report Redaction
+
+Proof reports redact obvious secret-like values from user-facing text, Markdown, and JSON output. Current redaction covers bearer tokens, OpenAI-style `sk-`/`sk-proj-` keys, AWS access key ids, private-key markers, and long prefixed secret values in command-derived report excerpts.
+
+Redaction applies to report strings such as verification subjects, failure subjects, risky command text, session titles, and decision reasons. Raw local SQLite rows still preserve the original source events and command strings for local auditability.
 
 ## Proof Decision
 
