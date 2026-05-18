@@ -39,12 +39,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Init(args) => init_config(args)?,
         Command::Doctor(args) => doctor_config(args)?,
         Command::Ingest(args) => ingest_codex(args)?,
-        Command::Proof(args) => {
-            println!(
-                "prooflog proof is not implemented yet. Planned comparison base: {}",
-                args.since
-            );
-        }
+        Command::Proof(args) => proof_git_context(args)?,
     }
 
     Ok(())
@@ -133,6 +128,24 @@ fn ingest_codex(args: IngestArgs) -> Result<()> {
     Ok(())
 }
 
+fn proof_git_context(args: ProofArgs) -> Result<()> {
+    let repo_path = args.repo.unwrap_or(env::current_dir().context(
+        "failed to resolve current directory; pass --repo <PATH> to choose a repository",
+    )?);
+    let git = inspect_proof_git(&repo_path, &args.since)?;
+
+    println!("Git:");
+    println!("  repo: {}", git.repo_root.display());
+    println!("  branch: {}", git.branch);
+    println!("  head: {}", git.head);
+    println!("  merge base: {}", git.merge_base);
+    println!("  dirty: {}", if git.dirty { "yes" } else { "no" });
+    println!("Proof:");
+    println!("  since: {}", args.since);
+    println!("  proof report: not implemented yet");
+    Ok(())
+}
+
 fn print_config_status(heading: &str, config_file: &Path, config: &ProoflogConfig) {
     println!("{heading}");
     println!("  path: {}", config_file.display());
@@ -213,6 +226,15 @@ struct GitStatus {
     repo_root: Option<PathBuf>,
     branch: Option<String>,
     warnings: Vec<String>,
+}
+
+#[derive(Debug)]
+struct ProofGitContext {
+    repo_root: PathBuf,
+    branch: String,
+    head: String,
+    merge_base: String,
+    dirty: bool,
 }
 
 #[derive(Debug, Default)]
@@ -1176,6 +1198,53 @@ fn inspect_git() -> GitStatus {
     }
 }
 
+fn inspect_proof_git(repo_path: &Path, since: &str) -> Result<ProofGitContext> {
+    let repo_root = run_git_in(repo_path, ["rev-parse", "--show-toplevel"])
+        .map(PathBuf::from)
+        .map_err(|_| GitError::NotRepository {
+            path: repo_path.to_path_buf(),
+        })
+        .with_context(|| {
+            format!(
+                "not a git repository: {}; pass --repo <PATH> to choose a repository",
+                repo_path.display()
+            )
+        })?;
+    let head = run_git_in(&repo_root, ["rev-parse", "HEAD"])
+        .map_err(|_| GitError::MissingHead {
+            path: repo_root.clone(),
+        })
+        .with_context(|| format!("failed to inspect git HEAD in {}", repo_root.display()))?;
+    let branch = run_git_in(&repo_root, ["branch", "--show-current"])
+        .ok()
+        .filter(|branch| !branch.is_empty())
+        .unwrap_or_else(|| format!("HEAD {}", short_hash(&head)));
+    let merge_base = run_git_in(&repo_root, ["merge-base", since, "HEAD"])
+        .map_err(|_| GitError::InvalidBaseRef {
+            reference: since.to_string(),
+        })
+        .with_context(|| {
+            format!(
+                "invalid git base ref `{since}` or no merge base with HEAD in {}",
+                repo_root.display()
+            )
+        })?;
+    let dirty = !run_git_in(&repo_root, ["status", "--porcelain"])
+        .map_err(|_| GitError::StatusFailed {
+            path: repo_root.clone(),
+        })
+        .with_context(|| format!("failed to inspect git status in {}", repo_root.display()))?
+        .is_empty();
+
+    Ok(ProofGitContext {
+        repo_root,
+        branch,
+        head,
+        merge_base,
+        dirty,
+    })
+}
+
 fn run_git<const N: usize>(args: [&str; N]) -> Option<String> {
     let output = ProcessCommand::new("git").args(args).output().ok()?;
     if !output.status.success() {
@@ -1183,6 +1252,25 @@ fn run_git<const N: usize>(args: [&str; N]) -> Option<String> {
     }
     let text = String::from_utf8(output.stdout).ok()?;
     Some(text.trim().to_string())
+}
+
+fn run_git_in<const N: usize>(
+    repo_path: &Path,
+    args: [&str; N],
+) -> std::result::Result<String, String> {
+    let output = ProcessCommand::new("git")
+        .args(args)
+        .current_dir(repo_path)
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn short_hash(hash: &str) -> String {
+    hash.chars().take(7).collect()
 }
 
 fn initialize_database(db_path: &Path) -> Result<StorageStatus> {
@@ -1770,6 +1858,18 @@ enum IngestError {
     MissingCodexRoot { path: PathBuf },
     #[error("Codex root is not a directory: {path}")]
     InvalidCodexRoot { path: PathBuf },
+}
+
+#[derive(Debug, thiserror::Error)]
+enum GitError {
+    #[error("not a git repository: {path}")]
+    NotRepository { path: PathBuf },
+    #[error("git repository has no HEAD: {path}")]
+    MissingHead { path: PathBuf },
+    #[error("invalid git base ref: {reference}")]
+    InvalidBaseRef { reference: String },
+    #[error("could not inspect git status: {path}")]
+    StatusFailed { path: PathBuf },
 }
 
 #[derive(Debug, Parser)]

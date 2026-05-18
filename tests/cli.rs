@@ -2,9 +2,9 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
-use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::{symlink, PermissionsExt};
+use std::{fs, process::Command as ProcessCommand};
 use tempfile::TempDir;
 
 #[test]
@@ -48,6 +48,77 @@ fn proof_command_is_explicitly_unimplemented() {
         .assert()
         .success()
         .stdout(predicate::str::contains("not implemented yet"));
+}
+
+#[test]
+fn proof_reports_git_context_for_repo_override() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::write(repo.join("untracked.txt"), "pending\n").unwrap();
+
+    env.command_in(env.home.path())
+        .args(["proof", "--since", "main", "--repo", repo.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Git:")
+                .and(predicate::str::contains(format!(
+                    "repo: {}",
+                    repo.canonicalize().unwrap().display()
+                )))
+                .and(predicate::str::contains("branch: main"))
+                .and(predicate::str::contains("head: "))
+                .and(predicate::str::contains("merge base: "))
+                .and(predicate::str::contains("dirty: yes"))
+                .and(predicate::str::contains(
+                    "proof report: not implemented yet",
+                )),
+        );
+}
+
+#[test]
+fn proof_detects_git_context_from_current_directory() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+
+    env.command_in(&repo)
+        .args(["proof", "--since", "main"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains(format!("repo: {}", repo.canonicalize().unwrap().display()))
+                .and(predicate::str::contains("branch: main"))
+                .and(predicate::str::contains("dirty: no")),
+        );
+}
+
+#[test]
+fn proof_fails_outside_git_repo() {
+    let env = CliEnv::new();
+
+    env.command_in(env.home.path())
+        .args(["proof", "--since", "main"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("not a git repository")
+                .and(predicate::str::contains("--repo <PATH>")),
+        );
+}
+
+#[test]
+fn proof_fails_on_invalid_since_ref() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+
+    env.command_in(&repo)
+        .args(["proof", "--since", "missing-ref"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("invalid git base ref")
+                .and(predicate::str::contains("missing-ref")),
+        );
 }
 
 #[test]
@@ -1785,4 +1856,29 @@ fn sha256_hex(text: &str) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+fn init_git_repo(path: std::path::PathBuf) -> std::path::PathBuf {
+    fs::create_dir_all(&path).unwrap();
+    git(&path, ["init", "-b", "main"]);
+    git(&path, ["config", "user.email", "test@example.com"]);
+    git(&path, ["config", "user.name", "ProofLog Test"]);
+    fs::write(path.join("README.md"), "# test\n").unwrap();
+    git(&path, ["add", "README.md"]);
+    git(&path, ["commit", "-m", "initial"]);
+    path
+}
+
+fn git<const N: usize>(repo: &std::path::Path, args: [&str; N]) {
+    let output = ProcessCommand::new("git")
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git command failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

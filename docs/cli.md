@@ -27,7 +27,7 @@ The current config stores:
 
 `prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, and derives session/message/command/approval/file-change rows.
 
-`prooflog proof --since main` is still an explicit placeholder. It does not inspect git state or produce proof reports yet.
+`prooflog proof --since main` detects the current git repository context and prints repo root, branch or detached HEAD label, current HEAD, merge base, and dirty working tree status. It remains an explicit proof-report placeholder and does not produce the final proof report yet.
 
 ## Local Paths
 
@@ -59,17 +59,31 @@ $HOME/.codex
 
 `prooflog ingest --codex` will later derive proof facts from stored raw lines.
 
-`prooflog proof --since main` will produce the core proof report.
+`prooflog proof --since main` will later produce the core proof report.
 
 ## Current Argument Contract
 
-`prooflog proof` requires `--since <REF>`.
+`prooflog proof` requires `--since <REF>` and supports `--repo <PATH>`.
 
 `prooflog ingest` requires `--codex`.
 
 `prooflog init` and `prooflog doctor` support `--db <PATH>` and `--codex-root <PATH>` overrides.
 
 These contracts are covered by integration tests so future implementations keep the initial UX stable.
+
+## Proof Git Context
+
+`prooflog proof --since <REF>` currently resolves git context before report generation.
+
+It prints:
+
+- repository root
+- current branch, or a detached HEAD label
+- current HEAD
+- merge base for `--since <REF>`
+- dirty working tree status
+
+Use `--repo <PATH>` to inspect a repository other than the current working directory. Running outside a git repository or passing an invalid base ref fails with an actionable error. Changed-file correlation, Codex evidence correlation, final proof reports, and final decision exit codes are planned follow-up work.
 
 ## SQLite Schema
 
