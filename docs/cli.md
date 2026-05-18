@@ -171,6 +171,19 @@ Current decision rules are intentionally conservative:
 
 Decision reasons may include session ids, verification command subjects, and status summaries. They do not print command output or raw transcript text.
 
+## No-Evidence Next Actions
+
+UNKNOWN and NOT READY reports include deterministic next actions based on the strongest decision reason:
+
+- missing local proof database: run `prooflog init` and `prooflog ingest --codex`, then rerun proof
+- no changed files: choose a base ref with changed files, then rerun proof
+- no relevant Codex sessions: ingest Codex history for this repository, then rerun proof
+- no relevant verification evidence: run verification commands for this change, ingest Codex history, then rerun proof
+- ambiguous-only evidence: rerun verification from this repository so evidence can be linked directly
+- unresolved verification failures: resolve the listed verification failures and rerun proof
+
+Invalid git refs and non-git directories are runtime errors rather than proof reports. They exit with code `3` and keep actionable stderr.
+
 ## JSON Report
 
 `prooflog proof --format json` emits an experimental machine-readable report with `schema_version: 1`.

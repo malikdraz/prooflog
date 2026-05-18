@@ -827,7 +827,35 @@ fn next_step(decision: &ProofDecision) -> &'static str {
     match decision.status {
         "READY" => "review and paste the report where proof is needed",
         "NOT READY" => "resolve the listed verification failures and rerun proof",
-        _ => "ingest local Codex history or run verification, then rerun proof",
+        _ => unknown_next_step(decision),
+    }
+}
+
+fn unknown_next_step(decision: &ProofDecision) -> &'static str {
+    let has_reason = |needle: &str| {
+        decision
+            .reasons
+            .iter()
+            .any(|reason| reason.contains(needle))
+    };
+
+    if has_reason("local proof database is missing") {
+        "run `prooflog init` and `prooflog ingest --codex`, then rerun proof"
+    } else if has_reason("no changed files") {
+        "choose a base ref with changed files, then rerun proof"
+    } else if has_reason("no relevant Codex sessions") {
+        "ingest Codex history for this repository, then rerun proof"
+    } else if has_reason("no relevant verification evidence")
+        || has_reason("only unknown verification evidence")
+        || has_reason("no passing verification evidence")
+    {
+        "run verification commands for this change, ingest Codex history, then rerun proof"
+    } else if has_reason("only ambiguous verification evidence")
+        || has_reason("ambiguous failure resolution")
+    {
+        "rerun verification from this repository so evidence can be linked directly"
+    } else {
+        "ingest local Codex history or run verification, then rerun proof"
     }
 }
 

@@ -341,7 +341,10 @@ fn proof_detects_git_context_from_current_directory() {
         .stdout(
             predicate::str::contains(format!("repo: {}", repo.canonicalize().unwrap().display()))
                 .and(predicate::str::contains("branch: main"))
-                .and(predicate::str::contains("dirty: no")),
+                .and(predicate::str::contains("dirty: no"))
+                .and(predicate::str::contains(
+                    "choose a base ref with changed files, then rerun proof",
+                )),
         );
 }
 
@@ -1025,12 +1028,33 @@ fn proof_decision_unknown_when_db_is_missing() {
                 .and(predicate::str::contains("Why:"))
                 .and(predicate::str::contains("Next:"))
                 .and(predicate::str::contains(
-                    "ingest local Codex history or run verification, then rerun proof",
+                    "run `prooflog init` and `prooflog ingest --codex`, then rerun proof",
                 ))
                 .and(predicate::str::contains(
                     "reason: local proof database is missing",
                 )),
         );
+
+    let output = env
+        .command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--format",
+            "json",
+            "--db",
+            missing_db.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        report["next_actions"][0],
+        "run `prooflog init` and `prooflog ingest --codex`, then rerun proof"
+    );
 }
 
 #[test]
@@ -1078,6 +1102,9 @@ fn proof_decision_unknown_without_relevant_sessions() {
                 .and(predicate::str::contains("status: UNKNOWN"))
                 .and(predicate::str::contains("Why:"))
                 .and(predicate::str::contains("Next:"))
+                .and(predicate::str::contains(
+                    "ingest Codex history for this repository, then rerun proof",
+                ))
                 .and(predicate::str::contains(
                     "reason: no relevant Codex sessions",
                 )),
@@ -1134,6 +1161,9 @@ fn proof_decision_unknown_without_verification_evidence() {
                 .and(predicate::str::contains("Why:"))
                 .and(predicate::str::contains("Next:"))
                 .and(predicate::str::contains(
+                    "run verification commands for this change, ingest Codex history, then rerun proof",
+                ))
+                .and(predicate::str::contains(
                     "reason: no relevant verification evidence",
                 )),
         );
@@ -1187,6 +1217,9 @@ fn proof_decision_unknown_with_ambiguous_only_evidence() {
                 .and(predicate::str::contains("status: UNKNOWN"))
                 .and(predicate::str::contains("Why:"))
                 .and(predicate::str::contains("Next:"))
+                .and(predicate::str::contains(
+                    "rerun verification from this repository so evidence can be linked directly",
+                ))
                 .and(predicate::str::contains(
                     "reason: only ambiguous verification evidence found",
                 )),
