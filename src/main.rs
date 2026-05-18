@@ -284,8 +284,10 @@ fn discover_and_record_codex_files(conn: &mut Connection, root: &Path) -> Result
     }
     derive_sessions(&tx)?;
     derive_messages(&tx)?;
+    derive_commands(&tx)?;
     rebuild_raw_events_fts(&tx)?;
     rebuild_messages_fts(&tx)?;
+    rebuild_command_output_fts(&tx)?;
     tx.commit()
         .context("failed to record discovered Codex files")?;
 
@@ -568,6 +570,15 @@ fn rebuild_messages_fts(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn rebuild_command_output_fts(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "INSERT INTO command_output_fts(command_output_fts) VALUES ('rebuild')",
+        [],
+    )
+    .context("failed to rebuild command output FTS index")?;
+    Ok(())
+}
+
 #[derive(Debug, Default)]
 struct DerivedSession {
     codex_session_id: String,
@@ -771,6 +782,113 @@ fn extract_message(value: &Value) -> Option<(String, String)> {
     }
 
     Some((role.to_owned(), text.to_owned()))
+}
+
+#[derive(Debug)]
+struct DerivedCommand {
+    command: String,
+    cwd: Option<String>,
+    status: Option<String>,
+    exit_code: Option<i64>,
+    output: Option<String>,
+    started_at: Option<String>,
+    ended_at: Option<String>,
+}
+
+fn derive_commands(conn: &Connection) -> Result<()> {
+    conn.execute("DELETE FROM commands", [])
+        .context("failed to refresh derived commands")?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, session_id, raw_json, event_time
+             FROM raw_events
+             WHERE parse_error IS NULL
+             ORDER BY codex_file_id, line_number",
+        )
+        .context("failed to derive commands from raw events")?;
+    let mut rows = stmt
+        .query([])
+        .context("failed to derive commands from raw events")?;
+
+    while let Some(row) = rows
+        .next()
+        .context("failed to derive commands from raw events")?
+    {
+        let raw_event_id: i64 = row
+            .get(0)
+            .context("failed to derive commands from raw events")?;
+        let session_id: Option<i64> = row
+            .get(1)
+            .context("failed to derive commands from raw events")?;
+        let raw_json: String = row
+            .get(2)
+            .context("failed to derive commands from raw events")?;
+        let event_time: Option<String> = row
+            .get(3)
+            .context("failed to derive commands from raw events")?;
+        let value: Value =
+            serde_json::from_str(&raw_json).context("failed to derive commands from raw events")?;
+        let Some(command) = extract_command(&value, event_time.as_deref()) else {
+            continue;
+        };
+
+        conn.execute(
+            "INSERT INTO commands (
+                raw_event_id,
+                session_id,
+                command,
+                cwd,
+                status,
+                exit_code,
+                output,
+                started_at,
+                ended_at
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            (
+                raw_event_id,
+                session_id,
+                command.command.as_str(),
+                command.cwd.as_deref(),
+                command.status.as_deref(),
+                command.exit_code,
+                command.output.as_deref(),
+                command.started_at.as_deref(),
+                command.ended_at.as_deref(),
+            ),
+        )
+        .context("failed to record derived command")?;
+    }
+
+    Ok(())
+}
+
+fn extract_command(value: &Value, event_time: Option<&str>) -> Option<DerivedCommand> {
+    if value.get("type").and_then(Value::as_str) != Some("command") {
+        return None;
+    }
+
+    let command = value.get("command")?;
+    let command_text = command.get("cmd").and_then(Value::as_str)?.trim();
+    if command_text.is_empty() {
+        return None;
+    }
+
+    let started_at = string_field(command, &["started_at", "start_time"])
+        .or_else(|| event_time.map(ToOwned::to_owned));
+    let ended_at = string_field(command, &["ended_at", "end_time"])
+        .or_else(|| event_time.map(ToOwned::to_owned));
+
+    Some(DerivedCommand {
+        command: command_text.to_owned(),
+        cwd: string_field(command, &["cwd"]),
+        status: string_field(command, &["status"]),
+        exit_code: command.get("exit_code").and_then(Value::as_i64),
+        output: string_field(command, &["output"]),
+        started_at,
+        ended_at,
+    })
 }
 
 fn sha256_hex(text: &str) -> String {

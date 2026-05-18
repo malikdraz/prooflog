@@ -25,7 +25,7 @@ The current config stores:
 - Codex root
 - redaction defaults
 
-`prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message FTS indexes, and derives session/message rows.
+`prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, and derives session/message/command rows.
 
 `prooflog proof --since main` is still an explicit placeholder. It does not inspect git state or produce proof reports yet.
 
@@ -57,7 +57,7 @@ $HOME/.codex
 
 `prooflog doctor` will later add deeper parser diagnostics and richer git edge-case handling.
 
-`prooflog ingest --codex` will later derive commands, approvals, file changes, and proof facts from stored raw lines.
+`prooflog ingest --codex` will later derive approvals, file changes, and proof facts from stored raw lines.
 
 `prooflog proof --since main` will produce the core proof report.
 
@@ -91,7 +91,7 @@ It also creates these FTS5 tables:
 - `messages_fts`
 - `command_output_fts`
 
-The schema is raw-first. Current ingest populates `codex_files`, `raw_events`, `sessions`, and `messages`; later parser work will populate the remaining derived tables.
+The schema is raw-first. Current ingest populates `codex_files`, `raw_events`, `sessions`, `messages`, and `commands`; later parser work will populate the remaining derived tables.
 
 ## Codex Discovery
 
@@ -133,7 +133,7 @@ Current ingest output includes:
 - unknown event shapes
 - warning count
 
-Warning details are grouped under `Warnings:` only when present. After ingest, `raw_events_fts` is rebuilt from stored raw events and `messages_fts` is rebuilt from derived messages for internal diagnostics. These are not user-facing search commands, and richer derived parser extraction remains planned follow-up work.
+Warning details are grouped under `Warnings:` only when present. After ingest, `raw_events_fts` is rebuilt from stored raw events, `messages_fts` is rebuilt from derived messages, and `command_output_fts` is rebuilt from derived commands for internal diagnostics. These are not user-facing search commands, and richer derived parser extraction remains planned follow-up work.
 
 ## Session Derivation
 
@@ -164,7 +164,24 @@ When available, each derived message records:
 - message text
 - event timestamp
 
-Unknown message shapes and empty message text are skipped instead of guessed. Message text is indexed in `messages_fts` for internal diagnostics, but ingest does not print raw message text by default. Command, approval, file-change, and proof-fact extraction are planned follow-up work.
+Unknown message shapes and empty message text are skipped instead of guessed. Message text is indexed in `messages_fts` for internal diagnostics, but ingest does not print raw message text by default.
+
+## Command Derivation
+
+Ingest derives `commands` rows from parseable command events with a known command string.
+
+When available, each derived command records:
+
+- raw event link
+- session link
+- command string
+- cwd
+- status
+- exit code
+- output text
+- start and end timestamps
+
+Unknown command shapes and missing command strings are skipped instead of guessed. Command/output text is indexed in `command_output_fts` for internal diagnostics, but ingest does not print command output by default. Approval, file-change, proof-fact, git correlation, and proof report behavior are planned follow-up work.
 
 ## Permission Warnings
 

@@ -886,6 +886,168 @@ fn ingest_populates_message_fts_index() {
 }
 
 #[test]
+fn ingest_derives_commands_from_raw_events() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("01_single_success.jsonl"),
+        include_str!("fixtures/codex/01_single_success.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let commands = command_rows(env.db_file());
+    assert_eq!(commands.len(), 1);
+    assert!(commands[0].raw_event_id > 0);
+    assert!(commands[0].session_id.is_some());
+    assert_eq!(commands[0].command, "cargo test");
+    assert_eq!(commands[0].cwd.as_deref(), Some("/workspace/prooflog"));
+    assert_eq!(commands[0].status.as_deref(), Some("success"));
+    assert_eq!(commands[0].exit_code, Some(0));
+    assert_eq!(
+        commands[0].output.as_deref(),
+        Some("test result: ok. 32 passed; 0 failed")
+    );
+    assert_eq!(
+        commands[0].started_at.as_deref(),
+        Some("2026-05-18T10:01:00Z")
+    );
+    assert_eq!(
+        commands[0].ended_at.as_deref(),
+        Some("2026-05-18T10:01:00Z")
+    );
+}
+
+#[test]
+fn command_derivation_extracts_failed_commands() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("03_unresolved_failure.jsonl"),
+        include_str!("fixtures/codex/03_unresolved_failure.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let commands = command_rows(env.db_file());
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].status.as_deref(), Some("failure"));
+    assert_eq!(commands[0].exit_code, Some(101));
+    assert_eq!(
+        commands[0].output.as_deref(),
+        Some("test fixture_03_unresolved_failure_is_not_ready ... FAILED")
+    );
+}
+
+#[test]
+fn command_derivation_skips_unknown_shapes() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("commands.jsonl"),
+        concat!(
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:00Z\",\"command\":{\"cwd\":\"/workspace/prooflog\",\"status\":\"success\"}}\n",
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:05Z\",\"command\":{\"cmd\":\"cargo test\"}}\n",
+            "not json\n"
+        ),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let commands = command_rows(env.db_file());
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].command, "cargo test");
+    assert!(commands[0].session_id.is_none());
+    assert!(commands[0].status.is_none());
+    assert!(commands[0].exit_code.is_none());
+}
+
+#[test]
+fn repeated_ingest_does_not_duplicate_commands() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("02_fail_then_pass.jsonl"),
+        include_str!("fixtures/codex/02_fail_then_pass.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    for _ in 0..2 {
+        env.command()
+            .args([
+                "ingest",
+                "--codex",
+                "--codex-root",
+                codex_root.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+    }
+
+    assert_eq!(command_rows(env.db_file()).len(), 2);
+}
+
+#[test]
+fn ingest_populates_command_output_fts_index() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("03_unresolved_failure.jsonl"),
+        include_str!("fixtures/codex/03_unresolved_failure.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(command_output_fts_match_count(env.db_file(), "FAILED"), 1);
+}
+
+#[test]
 fn doctor_reports_missing_raw_event_fts_table() {
     let env = CliEnv::new();
     env.command().arg("init").assert().success();
@@ -1113,6 +1275,18 @@ struct MessageRow {
     created_at: Option<String>,
 }
 
+struct CommandRow {
+    raw_event_id: i64,
+    session_id: Option<i64>,
+    command: String,
+    cwd: Option<String>,
+    status: Option<String>,
+    exit_code: Option<i64>,
+    output: Option<String>,
+    started_at: Option<String>,
+    ended_at: Option<String>,
+}
+
 fn codex_file_rows(db_path: impl AsRef<std::path::Path>) -> Vec<CodexFileRow> {
     let conn = Connection::open(db_path).unwrap();
     let mut stmt = conn
@@ -1205,6 +1379,33 @@ fn message_rows(db_path: impl AsRef<std::path::Path>) -> Vec<MessageRow> {
     .unwrap()
 }
 
+fn command_rows(db_path: impl AsRef<std::path::Path>) -> Vec<CommandRow> {
+    let conn = Connection::open(db_path).unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT raw_event_id, session_id, command, cwd, status, exit_code, output, started_at, ended_at
+             FROM commands
+             ORDER BY raw_event_id",
+        )
+        .unwrap();
+    stmt.query_map([], |row| {
+        Ok(CommandRow {
+            raw_event_id: row.get(0)?,
+            session_id: row.get(1)?,
+            command: row.get(2)?,
+            cwd: row.get(3)?,
+            status: row.get(4)?,
+            exit_code: row.get(5)?,
+            output: row.get(6)?,
+            started_at: row.get(7)?,
+            ended_at: row.get(8)?,
+        })
+    })
+    .unwrap()
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()
+}
+
 fn linked_raw_event_count(db_path: impl AsRef<std::path::Path>, session_id: i64) -> i64 {
     let conn = Connection::open(db_path).unwrap();
     conn.query_row(
@@ -1219,6 +1420,16 @@ fn message_fts_match_count(db_path: impl AsRef<std::path::Path>, query: &str) ->
     let conn = Connection::open(db_path).unwrap();
     conn.query_row(
         "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?1",
+        [query],
+        |row| row.get(0),
+    )
+    .unwrap()
+}
+
+fn command_output_fts_match_count(db_path: impl AsRef<std::path::Path>, query: &str) -> i64 {
+    let conn = Connection::open(db_path).unwrap();
+    conn.query_row(
+        "SELECT COUNT(*) FROM command_output_fts WHERE command_output_fts MATCH ?1",
         [query],
         |row| row.get(0),
     )
