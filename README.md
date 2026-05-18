@@ -65,7 +65,7 @@ Within 7 days of first usable release:
 
 ## Current Status
 
-ProofLog currently has an initial Rust CLI with local config path handling, SQLite schema initialization, owner-only file permissions on Unix-like systems, first-time `doctor` readiness output, Codex JSONL file discovery, raw JSONL line storage, raw/message/command-output FTS indexing for diagnostics, derived session/message/command/approval/file-change rows, verification and failure proof facts, proof-command git context plus changed-file detection, and session-to-repo correlation. The binary builds and exposes the planned MVP command surface:
+ProofLog currently has an initial Rust CLI with local config path handling, SQLite schema initialization, owner-only file permissions on Unix-like systems, first-time `doctor` readiness output, Codex JSONL file discovery, raw JSONL line storage, raw/message/command-output FTS indexing for diagnostics, derived session/message/command/approval/file-change rows, verification/failure/resolution proof facts, proof-command git context plus changed-file detection, and session-to-repo correlation. The binary builds and exposes the planned MVP command surface:
 
 ```bash
 prooflog --help
@@ -75,7 +75,7 @@ prooflog ingest --codex
 prooflog proof --since main
 ```
 
-`prooflog init` creates a local TOML config file, initializes the local SQLite database schema, and sets config/DB files to owner-readable/writable on Unix-like systems. `prooflog doctor` can read config, show storage status, count local Codex JSONL files, detect the current git repo when available, and warn on missing Codex/git context or broad config/DB file permissions. `prooflog ingest --codex` discovers `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite while preserving malformed lines with parse errors, rebuilds raw/message/command-output FTS indexes for later diagnostics, derives session/message/command/approval/file-change rows, and classifies supported verification and failure evidence into local proof facts. `prooflog proof --since <REF>` detects repo root, branch, HEAD, merge base, dirty state, changed files, diff stats, docs-only status, and relevant/ambiguous Codex sessions from local storage, with `--repo <PATH>` for explicit repository selection. Failure resolution, final reports, decisions, and final exit-code behavior are still planned.
+`prooflog init` creates a local TOML config file, initializes the local SQLite database schema, and sets config/DB files to owner-readable/writable on Unix-like systems. `prooflog doctor` can read config, show storage status, count local Codex JSONL files, detect the current git repo when available, and warn on missing Codex/git context or broad config/DB file permissions. `prooflog ingest --codex` discovers `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite while preserving malformed lines with parse errors, rebuilds raw/message/command-output FTS indexes for later diagnostics, derives session/message/command/approval/file-change rows, and classifies supported verification, failure, and failure-resolution evidence into local proof facts. `prooflog proof --since <REF>` detects repo root, branch, HEAD, merge base, dirty state, changed files, diff stats, docs-only status, and relevant/ambiguous Codex sessions from local storage, with `--repo <PATH>` for explicit repository selection. Final reports, decisions, and final exit-code behavior are still planned.
 
 Start here:
 

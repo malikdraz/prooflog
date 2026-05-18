@@ -1470,7 +1470,7 @@ fn repeated_ingest_does_not_duplicate_proof_facts() {
             .success();
     }
 
-    assert_eq!(proof_fact_rows(env.db_file()).len(), 3);
+    assert_eq!(proof_fact_rows(env.db_file()).len(), 4);
 }
 
 #[test]
@@ -1626,6 +1626,177 @@ fn repeated_ingest_does_not_duplicate_failure_facts() {
         .filter(|fact| fact.kind == "failure")
         .count();
     assert_eq!(failure_count, 1);
+}
+
+#[test]
+fn failure_resolution_marks_fail_then_pass_resolved() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("02_fail_then_pass.jsonl"),
+        include_str!("fixtures/codex/02_fail_then_pass.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let resolution_facts = proof_fact_rows(env.db_file())
+        .into_iter()
+        .filter(|fact| fact.kind == "failure_resolution")
+        .collect::<Vec<_>>();
+    assert_eq!(resolution_facts.len(), 1);
+    assert_eq!(resolution_facts[0].subject.as_deref(), Some("cargo test"));
+    assert_eq!(resolution_facts[0].status, "resolved");
+    assert!(resolution_facts[0]
+        .reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("resolution=exact-rerun")));
+}
+
+#[test]
+fn failure_resolution_marks_unresolved_fixture_unresolved() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("03_unresolved_failure.jsonl"),
+        include_str!("fixtures/codex/03_unresolved_failure.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let resolution_facts = proof_fact_rows(env.db_file())
+        .into_iter()
+        .filter(|fact| fact.kind == "failure_resolution")
+        .collect::<Vec<_>>();
+    assert_eq!(resolution_facts.len(), 1);
+    assert_eq!(resolution_facts[0].subject.as_deref(), Some("cargo test"));
+    assert_eq!(resolution_facts[0].status, "unresolved");
+    assert!(resolution_facts[0]
+        .reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("resolution=no-later-pass")));
+}
+
+#[test]
+fn failure_resolution_ignores_unrelated_later_passes() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("commands.jsonl"),
+        concat!(
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:00Z\",\"command\":{\"cmd\":\"cargo test\",\"status\":\"failure\",\"exit_code\":101}}\n",
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:01Z\",\"command\":{\"cmd\":\"cargo build\",\"status\":\"success\",\"exit_code\":0}}\n"
+        ),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let resolution_facts = proof_fact_rows(env.db_file())
+        .into_iter()
+        .filter(|fact| fact.kind == "failure_resolution")
+        .collect::<Vec<_>>();
+    assert_eq!(resolution_facts.len(), 1);
+    assert_eq!(resolution_facts[0].status, "unresolved");
+}
+
+#[test]
+fn failure_resolution_marks_ambiguous_same_detector_passes_unknown() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("commands.jsonl"),
+        concat!(
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:00Z\",\"command\":{\"cmd\":\"cargo test tests/a.rs\",\"status\":\"failure\",\"exit_code\":101}}\n",
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:01Z\",\"command\":{\"cmd\":\"cargo test tests/b.rs\",\"status\":\"success\",\"exit_code\":0}}\n"
+        ),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let resolution_facts = proof_fact_rows(env.db_file())
+        .into_iter()
+        .filter(|fact| fact.kind == "failure_resolution")
+        .collect::<Vec<_>>();
+    assert_eq!(resolution_facts.len(), 1);
+    assert_eq!(resolution_facts[0].status, "unknown");
+    assert!(resolution_facts[0]
+        .reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("resolution=ambiguous")));
+}
+
+#[test]
+fn repeated_ingest_does_not_duplicate_failure_resolution_facts() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("02_fail_then_pass.jsonl"),
+        include_str!("fixtures/codex/02_fail_then_pass.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    for _ in 0..2 {
+        env.command()
+            .args([
+                "ingest",
+                "--codex",
+                "--codex-root",
+                codex_root.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+    }
+
+    let resolution_count = proof_fact_rows(env.db_file())
+        .into_iter()
+        .filter(|fact| fact.kind == "failure_resolution")
+        .count();
+    assert_eq!(resolution_count, 1);
 }
 
 #[test]

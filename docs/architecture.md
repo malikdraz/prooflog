@@ -32,6 +32,7 @@ Raw events are the source of truth. Derived tables are disposable.
    - file changes derived during ingest
    - verification proof facts derived during ingest
    - failure proof facts derived during ingest
+   - failure-resolution proof facts derived during ingest
 6. Git context and correlation
    - repo root, branch, HEAD, merge base, and dirty status detected by `prooflog proof`
    - changed files and diff stats detected by `prooflog proof`
@@ -39,7 +40,6 @@ Raw events are the source of truth. Derived tables are disposable.
    - risky path categories
 7. Proof engine
    - verification detectors
-   - unresolved failure resolution
    - risk classification
    - final decision
 8. Report renderer
@@ -50,7 +50,7 @@ Raw events are the source of truth. Derived tables are disposable.
 
 ## Data Model Notes
 
-The current MVP schema initializes these tables. `codex_files` is populated by discovery, `raw_events` is populated by raw ingestion, `sessions`/`messages`/`commands`/`approvals`/`file_changes` are derived during ingest, and supported verification plus failure evidence is classified into `proof_facts`. Git context, changed files, diff stats, and session-to-repo correlation are detected at proof-command runtime. Failure resolution and final decision facts are populated by later extraction work.
+The current MVP schema initializes these tables. `codex_files` is populated by discovery, `raw_events` is populated by raw ingestion, `sessions`/`messages`/`commands`/`approvals`/`file_changes` are derived during ingest, and supported verification, failure, and resolution evidence is classified into `proof_facts`. Git context, changed files, diff stats, and session-to-repo correlation are detected at proof-command runtime. Risk and final decision facts are populated by later extraction work.
 
 - `codex_files`
 - `sessions`

@@ -419,6 +419,7 @@ fn discover_and_record_codex_files(conn: &mut Connection, root: &Path) -> Result
     derive_file_changes(&tx)?;
     derive_verification_facts(&tx)?;
     derive_failure_facts(&tx)?;
+    derive_failure_resolution_facts(&tx)?;
     rebuild_raw_events_fts(&tx)?;
     rebuild_messages_fts(&tx)?;
     rebuild_command_output_fts(&tx)?;
@@ -1408,6 +1409,186 @@ fn failure_output_token(output: &str) -> Option<&'static str> {
     ];
 
     TOKENS.iter().copied().find(|token| output.contains(token))
+}
+
+#[derive(Debug)]
+struct CommandResolutionEvidence {
+    id: i64,
+    session_id: Option<i64>,
+    command: String,
+    detector: Option<&'static str>,
+    verification_status: &'static str,
+    has_failure: bool,
+}
+
+fn derive_failure_resolution_facts(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "DELETE FROM proof_facts WHERE kind = 'failure_resolution'",
+        [],
+    )
+    .context("failed to refresh failure resolution proof facts")?;
+
+    let commands = load_command_resolution_evidence(conn)?;
+    for failed in commands
+        .iter()
+        .filter(|command| command.detector.is_some() && command.has_failure)
+    {
+        let detector = failed.detector.expect("detector checked above");
+        let later_passes = commands
+            .iter()
+            .filter(|candidate| {
+                candidate.id > failed.id
+                    && candidate.detector == Some(detector)
+                    && candidate.verification_status == "passed"
+            })
+            .collect::<Vec<_>>();
+
+        let (status, reason) = resolve_failed_command(failed, detector, &later_passes);
+        conn.execute(
+            "INSERT INTO proof_facts (
+                session_id,
+                command_id,
+                kind,
+                subject,
+                status,
+                reason
+             )
+             VALUES (?1, ?2, 'failure_resolution', ?3, ?4, ?5)",
+            (
+                failed.session_id,
+                failed.id,
+                failed.command.as_str(),
+                status,
+                reason.as_str(),
+            ),
+        )
+        .context("failed to record failure resolution proof fact")?;
+    }
+
+    Ok(())
+}
+
+fn load_command_resolution_evidence(conn: &Connection) -> Result<Vec<CommandResolutionEvidence>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, session_id, command, status, exit_code, output
+             FROM commands
+             ORDER BY id",
+        )
+        .context("failed to derive failure resolution proof facts")?;
+    let mut rows = stmt
+        .query([])
+        .context("failed to derive failure resolution proof facts")?;
+    let mut commands = Vec::new();
+
+    while let Some(row) = rows
+        .next()
+        .context("failed to derive failure resolution proof facts")?
+    {
+        let id: i64 = row
+            .get(0)
+            .context("failed to derive failure resolution proof facts")?;
+        let session_id: Option<i64> = row
+            .get(1)
+            .context("failed to derive failure resolution proof facts")?;
+        let command: String = row
+            .get(2)
+            .context("failed to derive failure resolution proof facts")?;
+        let status: Option<String> = row
+            .get(3)
+            .context("failed to derive failure resolution proof facts")?;
+        let exit_code: Option<i64> = row
+            .get(4)
+            .context("failed to derive failure resolution proof facts")?;
+        let output: Option<String> = row
+            .get(5)
+            .context("failed to derive failure resolution proof facts")?;
+
+        commands.push(CommandResolutionEvidence {
+            id,
+            session_id,
+            detector: classify_verification_command(&command),
+            verification_status: verification_status(status.as_deref(), exit_code),
+            has_failure: failure_reason(status.as_deref(), exit_code, output.as_deref()).is_some(),
+            command,
+        });
+    }
+
+    Ok(commands)
+}
+
+fn resolve_failed_command(
+    failed: &CommandResolutionEvidence,
+    detector: &str,
+    later_passes: &[&CommandResolutionEvidence],
+) -> (&'static str, String) {
+    if later_passes.is_empty() {
+        return (
+            "unresolved",
+            format!("resolution=no-later-pass; detector={detector}"),
+        );
+    }
+
+    if let Some(exact) = later_passes.iter().find(|candidate| {
+        normalized_command(&candidate.command) == normalized_command(&failed.command)
+    }) {
+        return (
+            "resolved",
+            format!(
+                "resolution=exact-rerun; detector={detector}; matched_command_id={}",
+                exact.id
+            ),
+        );
+    }
+
+    if let Some(compatible) = later_passes
+        .iter()
+        .find(|candidate| commands_are_compatible(&failed.command, &candidate.command, detector))
+    {
+        return (
+            "resolved",
+            format!(
+                "resolution=compatible-rerun; detector={detector}; matched_command_id={}",
+                compatible.id
+            ),
+        );
+    }
+
+    (
+        "unknown",
+        format!("resolution=ambiguous; detector={detector}"),
+    )
+}
+
+fn commands_are_compatible(failed: &str, passed: &str, detector: &str) -> bool {
+    let failed = normalized_command(failed);
+    let passed = normalized_command(passed);
+    if failed == passed {
+        return true;
+    }
+
+    let failed_rest = command_remainder_after_detector(&failed, detector);
+    let passed_rest = command_remainder_after_detector(&passed, detector);
+
+    failed_rest.is_some_and(|rest| !rest.is_empty()) && passed_rest == Some("")
+}
+
+fn command_remainder_after_detector<'a>(command: &'a str, detector: &str) -> Option<&'a str> {
+    if command == detector {
+        return Some("");
+    }
+    command
+        .strip_prefix(detector)
+        .and_then(|rest| rest.strip_prefix(char::is_whitespace))
+        .map(str::trim)
+}
+
+fn normalized_command(command: &str) -> String {
+    command
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
 }
 
 fn sha256_hex(text: &str) -> String {

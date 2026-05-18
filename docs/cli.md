@@ -25,7 +25,7 @@ The current config stores:
 - Codex root
 - redaction defaults
 
-`prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, derives session/message/command/approval/file-change rows, and classifies supported verification and failure evidence into local proof facts.
+`prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, derives session/message/command/approval/file-change rows, and classifies supported verification, failure, and failure-resolution evidence into local proof facts.
 
 `prooflog proof --since main` detects the current git repository context and prints repo root, branch or detached HEAD label, current HEAD, merge base, dirty working tree status, changed files, diff stats, docs-only status, and relevant/ambiguous Codex sessions from local storage. It remains an explicit proof-report placeholder and does not produce the final proof report yet.
 
@@ -57,7 +57,7 @@ $HOME/.codex
 
 `prooflog doctor` will later add deeper parser diagnostics and richer git edge-case handling.
 
-`prooflog ingest --codex` will later add risk and resolution proof facts from stored raw lines.
+`prooflog ingest --codex` will later add risk proof facts from stored raw lines.
 
 `prooflog proof --since main` will later produce the core proof report.
 
@@ -99,7 +99,7 @@ Strong relevant signals include:
 - command cwd inside the repo
 - file-change paths overlapping changed files
 
-Weak file-name-only overlap is reported as ambiguous rather than hidden. Missing or empty local storage reports zero relevant and ambiguous sessions without failing this placeholder proof flow. Failure resolution, final proof reports, and final decision exit codes are planned follow-up work.
+Weak file-name-only overlap is reported as ambiguous rather than hidden. Missing or empty local storage reports zero relevant and ambiguous sessions without failing this placeholder proof flow. Final proof reports and final decision exit codes are planned follow-up work.
 
 ## SQLite Schema
 
@@ -121,7 +121,7 @@ It also creates these FTS5 tables:
 - `messages_fts`
 - `command_output_fts`
 
-The schema is raw-first. Current ingest populates `codex_files`, `raw_events`, `sessions`, `messages`, `commands`, `approvals`, `file_changes`, and verification/failure rows in `proof_facts`; later parser work will add risk and resolution facts.
+The schema is raw-first. Current ingest populates `codex_files`, `raw_events`, `sessions`, `messages`, `commands`, `approvals`, `file_changes`, and verification/failure/resolution rows in `proof_facts`; later parser work will add risk facts.
 
 ## Codex Discovery
 
@@ -239,7 +239,19 @@ Failure signals include:
 - failure-like status such as `failure`, `failed`, `fail`, or `error`
 - output tokens such as `error`, `failed`, `permission denied`, `timed out`, `no such file`, `command not found`, `sandbox`, or `network`
 
-Each failure fact records the linked session, linked command, command subject, `failed` status, and a deterministic reason that names the strongest signal. Exit code `0` and success-like statuses are treated as non-failure for this detector. Failure resolution and final READY/NOT READY/UNKNOWN decisions are planned follow-up work.
+Each failure fact records the linked session, linked command, command subject, `failed` status, and a deterministic reason that names the strongest signal. Exit code `0` and success-like statuses are treated as non-failure for this detector.
+
+## Failure Resolution Proof Facts
+
+Ingest derives `failure_resolution` proof facts for failed verification commands.
+
+Resolution status is:
+
+- `resolved` when a later passing verification command is an exact rerun or a compatible broader rerun of the same detector
+- `unresolved` when no later passing verification command of the same detector exists
+- `unknown` when later passing evidence exists but compatibility is ambiguous
+
+Resolution facts are linked to the failed command and preserve a deterministic reason. Passing commands from unrelated verification detectors do not resolve failures. Final READY/NOT READY/UNKNOWN decisions are planned follow-up work.
 
 ## Approval Derivation
 
@@ -271,7 +283,7 @@ When available, each derived file change records:
 - lines added
 - lines deleted
 
-Missing optional file-change fields are stored as NULL. Missing paths and unknown file-change shapes are skipped instead of guessed. Ingest does not print raw diff text by default. Risk classification and proof report behavior are planned follow-up work.
+Missing optional file-change fields are stored as NULL. Missing paths and unknown file-change shapes are skipped instead of guessed. Ingest does not print raw diff text by default. Risk classification, final decisions, and proof report behavior are planned follow-up work.
 
 ## Permission Warnings
 
