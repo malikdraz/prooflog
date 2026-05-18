@@ -147,6 +147,8 @@ fn proof_git_context(args: ProofArgs) -> Result<()> {
     print_changed_files(&changed);
     let risk = classify_changed_risks(&changed);
     print_risk_report(&risk);
+    let risky_commands = classify_risky_commands(&db_path, &correlation)?;
+    print_risky_commands(&risky_commands);
     print_session_correlation(&correlation);
     println!("Proof:");
     println!("  since: {since}");
@@ -194,6 +196,34 @@ fn print_risk_report(risk: &RiskReport) {
             "  {}: {} ({})",
             finding.category, finding.path, finding.reason
         );
+    }
+}
+
+fn print_risky_commands(report: &RiskyCommandReport) {
+    println!("Risky commands:");
+    println!("  relevant: {}", report.relevant.len());
+    println!("  ambiguous: {}", report.ambiguous.len());
+    for finding in &report.relevant {
+        println!(
+            "  {} {} {} {}: {}",
+            finding.severity,
+            finding.family,
+            finding.codex_session_id,
+            finding.session_title.as_deref().unwrap_or("(untitled)"),
+            finding.command
+        );
+        println!("    reason: {}", finding.reason);
+    }
+    for finding in &report.ambiguous {
+        println!(
+            "  ambiguous {} {} {} {}: {}",
+            finding.severity,
+            finding.family,
+            finding.codex_session_id,
+            finding.session_title.as_deref().unwrap_or("(untitled)"),
+            finding.command
+        );
+        println!("    reason: {}", finding.reason);
     }
 }
 
@@ -351,6 +381,22 @@ struct RiskFinding {
 }
 
 #[derive(Debug, Default)]
+struct RiskyCommandReport {
+    relevant: Vec<RiskyCommandFinding>,
+    ambiguous: Vec<RiskyCommandFinding>,
+}
+
+#[derive(Debug)]
+struct RiskyCommandFinding {
+    codex_session_id: String,
+    session_title: Option<String>,
+    family: &'static str,
+    severity: &'static str,
+    reason: &'static str,
+    command: String,
+}
+
+#[derive(Debug, Default)]
 struct SessionCorrelation {
     relevant: Vec<CorrelatedSession>,
     ambiguous: Vec<CorrelatedSession>,
@@ -358,6 +404,7 @@ struct SessionCorrelation {
 
 #[derive(Debug)]
 struct CorrelatedSession {
+    id: i64,
     codex_session_id: String,
     title: Option<String>,
     signals: Vec<String>,
@@ -2119,6 +2166,149 @@ fn normalized_path(path: &str) -> String {
     path.replace('\\', "/").to_ascii_lowercase()
 }
 
+fn classify_risky_commands(
+    db_path: &Path,
+    correlation: &SessionCorrelation,
+) -> Result<RiskyCommandReport> {
+    if !db_path.exists() {
+        return Ok(RiskyCommandReport::default());
+    }
+
+    let conn = open_existing_database(db_path)?;
+    let relevant_sessions = correlated_sessions_by_id(&correlation.relevant);
+    let ambiguous_sessions = correlated_sessions_by_id(&correlation.ambiguous);
+
+    Ok(RiskyCommandReport {
+        relevant: load_risky_command_findings(&conn, &relevant_sessions)?,
+        ambiguous: load_risky_command_findings(&conn, &ambiguous_sessions)?,
+    })
+}
+
+fn correlated_sessions_by_id(sessions: &[CorrelatedSession]) -> BTreeMap<i64, &CorrelatedSession> {
+    sessions
+        .iter()
+        .map(|session| (session.id, session))
+        .collect()
+}
+
+fn load_risky_command_findings(
+    conn: &Connection,
+    sessions: &BTreeMap<i64, &CorrelatedSession>,
+) -> Result<Vec<RiskyCommandFinding>> {
+    let mut findings = Vec::new();
+    for session in sessions.values() {
+        let mut stmt = conn
+            .prepare(
+                "SELECT command
+                 FROM commands
+                 WHERE session_id = ?1
+                 ORDER BY id",
+            )
+            .context("failed to load risky commands")?;
+        let commands = stmt
+            .query_map([session.id], |row| row.get::<_, String>(0))
+            .context("failed to load risky commands")?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .context("failed to load risky commands")?;
+
+        for command in commands {
+            let Some(classification) = classify_risky_command(&command) else {
+                continue;
+            };
+            findings.push(RiskyCommandFinding {
+                codex_session_id: session.codex_session_id.clone(),
+                session_title: session.title.clone(),
+                family: classification.family,
+                severity: classification.severity,
+                reason: classification.reason,
+                command,
+            });
+        }
+    }
+
+    findings.sort_by(|left, right| {
+        (
+            left.codex_session_id.as_str(),
+            left.command.as_str(),
+            left.family,
+        )
+            .cmp(&(
+                right.codex_session_id.as_str(),
+                right.command.as_str(),
+                right.family,
+            ))
+    });
+    Ok(findings)
+}
+
+struct RiskyCommandClassification {
+    family: &'static str,
+    severity: &'static str,
+    reason: &'static str,
+}
+
+fn classify_risky_command(command: &str) -> Option<RiskyCommandClassification> {
+    let family = risky_command_family(command)?;
+    let high = risky_command_is_high_severity(command, family);
+    Some(RiskyCommandClassification {
+        family,
+        severity: if high { "high" } else { "elevated" },
+        reason: if high {
+            "production/destructive arguments"
+        } else {
+            "risky command family"
+        },
+    })
+}
+
+fn risky_command_family(command: &str) -> Option<&'static str> {
+    let first = command.split_whitespace().next()?.to_ascii_lowercase();
+    match first.as_str() {
+        "aws" => Some("aws"),
+        "kubectl" => Some("kubectl"),
+        "terraform" => Some("terraform"),
+        "helm" => Some("helm"),
+        "docker" => Some("docker"),
+        "gh" => Some("gh"),
+        "rm" => Some("rm"),
+        "chmod" => Some("chmod"),
+        "chown" => Some("chown"),
+        "curl" => Some("curl"),
+        "scp" => Some("scp"),
+        "ssh" => Some("ssh"),
+        _ => None,
+    }
+}
+
+fn risky_command_is_high_severity(command: &str, family: &str) -> bool {
+    let normalized = command.split_whitespace().collect::<Vec<_>>().join(" ");
+    let lower = normalized.to_ascii_lowercase();
+    if lower.contains("prod")
+        || lower.contains("production")
+        || lower.contains("--force")
+        || lower.contains(" destroy")
+        || lower.contains(" delete")
+        || lower.contains(" apply")
+    {
+        return true;
+    }
+
+    match family {
+        "rm" => lower.contains("-rf") || lower.contains("-fr"),
+        "chmod" => lower.contains(" 777"),
+        "chown" => true,
+        "aws" => lower.contains(" s3 rm") || lower.contains(" delete"),
+        "kubectl" => lower.contains(" apply") || lower.contains(" delete"),
+        "terraform" => lower.contains(" apply") || lower.contains(" destroy"),
+        "helm" => lower.contains(" upgrade") || lower.contains(" uninstall"),
+        "docker" => lower.contains(" push"),
+        "gh" => lower.contains(" release"),
+        "curl" => lower.contains("| sh") || lower.contains("| bash"),
+        "ssh" | "scp" => lower.contains("prod") || lower.contains("production"),
+        _ => false,
+    }
+}
+
 fn correlate_sessions(
     db_path: &Path,
     repo_root: &Path,
@@ -2169,6 +2359,7 @@ fn correlate_sessions(
 
         if !signals.is_empty() {
             correlation.relevant.push(CorrelatedSession {
+                id: session.id,
                 codex_session_id: session.codex_session_id,
                 title: session.title,
                 signals,
@@ -2183,6 +2374,7 @@ fn correlate_sessions(
         });
         if ambiguous {
             correlation.ambiguous.push(CorrelatedSession {
+                id: session.id,
                 codex_session_id: session.codex_session_id,
                 title: session.title,
                 signals: vec!["ambiguous-file-name".to_string()],

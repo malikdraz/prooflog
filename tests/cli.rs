@@ -399,6 +399,170 @@ fn proof_reports_ambiguous_session_overlap() {
 }
 
 #[test]
+fn proof_reports_risky_commands_from_relevant_sessions() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    git(&repo, ["add", "src/main.rs"]);
+    git(&repo, ["commit", "-m", "add code"]);
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    let repo_root = repo.canonicalize().unwrap();
+    fs::write(
+        codex_root.join("risky-session.jsonl"),
+        format!(
+            "{{\"type\":\"session_meta\",\"timestamp\":\"2026-05-18T14:00:00Z\",\"session_id\":\"session-risk\",\"workspace_path\":\"{}\",\"title\":\"Risky deploy\"}}\n\
+             {{\"type\":\"command\",\"timestamp\":\"2026-05-18T14:00:05Z\",\"session_id\":\"session-risk\",\"command\":{{\"cmd\":\"kubectl apply -f k8s/prod.yaml\",\"cwd\":\"{}\",\"status\":\"success\",\"exit_code\":0,\"output\":\"customer secret output should not print\"}}}}\n\
+             {{\"type\":\"command\",\"timestamp\":\"2026-05-18T14:00:06Z\",\"session_id\":\"session-risk\",\"command\":{{\"cmd\":\"cargo test\",\"cwd\":\"{}\",\"status\":\"success\",\"exit_code\":0,\"output\":\"ok\"}}}}\n",
+            repo_root.display(),
+            repo_root.display(),
+            repo_root.display()
+        ),
+    )
+    .unwrap();
+
+    env.command()
+        .args(["init", "--codex-root", codex_root.to_str().unwrap()])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    env.command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--db",
+            env.db_file().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Risky commands:")
+                .and(predicate::str::contains("relevant: 1"))
+                .and(predicate::str::contains("ambiguous: 0"))
+                .and(predicate::str::contains(
+                    "high kubectl session-risk Risky deploy: kubectl apply -f k8s/prod.yaml",
+                ))
+                .and(predicate::str::contains(
+                    "reason: production/destructive arguments",
+                ))
+                .and(predicate::str::contains("cargo test").not())
+                .and(predicate::str::contains("customer secret output should not print").not()),
+        );
+}
+
+#[test]
+fn proof_reports_risky_commands_from_ambiguous_sessions_separately() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    git(&repo, ["add", "src/main.rs"]);
+    git(&repo, ["commit", "-m", "add code"]);
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("ambiguous-risk.jsonl"),
+        concat!(
+            "{\"type\":\"file_change\",\"timestamp\":\"2026-05-18T14:00:10Z\",\"session_id\":\"session-ambiguous-risk\",\"file_change\":{\"path\":\"main.rs\",\"change_type\":\"modified\",\"lines_added\":1,\"lines_deleted\":0}}\n",
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T14:00:20Z\",\"session_id\":\"session-ambiguous-risk\",\"command\":{\"cmd\":\"aws s3 rm s3://prod-bucket/file\",\"status\":\"success\",\"exit_code\":0}}\n"
+        ),
+    )
+    .unwrap();
+
+    env.command()
+        .args(["init", "--codex-root", codex_root.to_str().unwrap()])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    env.command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--db",
+            env.db_file().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Risky commands:")
+                .and(predicate::str::contains("relevant: 0"))
+                .and(predicate::str::contains("ambiguous: 1"))
+                .and(predicate::str::contains(
+                    "ambiguous high aws session-ambiguous-risk (untitled): aws s3 rm s3://prod-bucket/file",
+                )),
+        );
+}
+
+#[test]
+fn proof_excludes_unrelated_risky_commands() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    git(&repo, ["add", "src/main.rs"]);
+    git(&repo, ["commit", "-m", "add code"]);
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("unrelated-risk.jsonl"),
+        "{\"type\":\"command\",\"timestamp\":\"2026-05-18T14:00:20Z\",\"session_id\":\"session-other-risk\",\"command\":{\"cmd\":\"rm -rf /tmp/prod\",\"cwd\":\"/tmp/other\",\"status\":\"success\",\"exit_code\":0}}\n",
+    )
+    .unwrap();
+
+    env.command()
+        .args(["init", "--codex-root", codex_root.to_str().unwrap()])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    env.command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--db",
+            env.db_file().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Risky commands:")
+                .and(predicate::str::contains("relevant: 0"))
+                .and(predicate::str::contains("ambiguous: 0"))
+                .and(predicate::str::contains("rm -rf").not()),
+        );
+}
+
+#[test]
 fn proof_handles_missing_db_for_session_correlation() {
     let env = CliEnv::new();
     let repo = init_git_repo(env.home.path().join("repo"));

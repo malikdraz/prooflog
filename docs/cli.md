@@ -27,7 +27,7 @@ The current config stores:
 
 `prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, derives session/message/command/approval/file-change rows, and classifies supported verification, failure, and failure-resolution evidence into local proof facts.
 
-`prooflog proof --since main` detects the current git repository context and prints repo root, branch or detached HEAD label, current HEAD, merge base, dirty working tree status, changed files, diff stats, docs-only status, risky changed paths, and relevant/ambiguous Codex sessions from local storage. It remains an explicit proof-report placeholder and does not produce the final proof report yet.
+`prooflog proof --since main` detects the current git repository context and prints repo root, branch or detached HEAD label, current HEAD, merge base, dirty working tree status, changed files, diff stats, docs-only status, risky changed paths, risky commands from relevant/ambiguous sessions, and relevant/ambiguous Codex sessions from local storage. It remains an explicit proof-report placeholder and does not produce the final proof report yet.
 
 ## Local Paths
 
@@ -87,6 +87,7 @@ It prints:
 - docs-only status
 - per-file status, path, additions, and deletions
 - risky path level, count, categories, and reasons
+- risky command counts, families, severity, and reasons
 
 Use `--repo <PATH>` to inspect a repository other than the current working directory. Running outside a git repository or passing an invalid base ref fails with an actionable error.
 
@@ -111,6 +112,27 @@ Current path categories are:
 - release
 
 Docs-only changes are reported as `risk level: low` with zero risky files. Mixed non-doc changes are `risk level: elevated` when any changed path matches a category. The classifier is deterministic and path-based; it does not inspect file contents or make a final readiness decision.
+
+## Risky Command Classification
+
+`prooflog proof --since <REF>` prints a `Risky commands:` section from commands in relevant and ambiguous Codex sessions.
+
+Current command families are:
+
+- `aws`
+- `kubectl`
+- `terraform`
+- `helm`
+- `docker`
+- `gh`
+- `rm`
+- `chmod`
+- `chown`
+- `curl`
+- `scp`
+- `ssh`
+
+Risky commands are reported with family, session, command subject, severity, and reason. Production-like or destructive arguments such as `prod`, `production`, `--force`, `delete`, `destroy`, `apply`, `rm -rf`, `chmod 777`, `terraform apply`, `kubectl delete`, and similar patterns raise severity to `high`. ProofLog reports these commands; it does not block them, execute them, print command output, or make a final readiness decision in this placeholder flow.
 
 ## Codex Session Correlation
 
