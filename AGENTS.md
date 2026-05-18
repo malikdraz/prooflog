@@ -8,6 +8,8 @@ This repo is the ProofLog project. Implementation has started with a Rust CLI sk
 
 - Core command: `prooflog proof --since main`
 - Current binary commands: `init`, `doctor`, `ingest`, `proof`
+- `prooflog init` currently creates local TOML config only; SQLite initialization is separate follow-up work.
+- `prooflog doctor` currently reads and prints config paths only; full readiness checks are separate follow-up work.
 - Local docs under `docs/` define the public project direction.
 
 Use the repo-local docs as the source of truth for public project direction unless the user gives newer requirements.

@@ -65,7 +65,7 @@ Within 7 days of first usable release:
 
 ## Current Status
 
-ProofLog currently has an initial Rust CLI skeleton. The binary builds and exposes the planned MVP command surface:
+ProofLog currently has an initial Rust CLI with local config path handling. The binary builds and exposes the planned MVP command surface:
 
 ```bash
 prooflog --help
@@ -75,7 +75,7 @@ prooflog ingest --codex
 prooflog proof --since main
 ```
 
-The command handlers are placeholders while config, SQLite storage, ingestion, git correlation, proof reports, and exit-code behavior are implemented.
+`prooflog init` creates a local TOML config file, and `prooflog doctor` can read it and show the resolved config, database, Codex root, and redaction settings. SQLite storage, ingestion, git correlation, proof reports, and final exit-code behavior are still planned.
 
 Start here:
 

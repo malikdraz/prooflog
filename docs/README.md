@@ -15,7 +15,7 @@ This directory is the repo-local starting point for ProofLog context.
 
 ## Current Repository State
 
-The repository currently contains the initial Rust CLI skeleton. It builds and exposes the planned MVP commands, but the command handlers are placeholders until the roadmap items add config, storage, ingestion, parser extraction, git correlation, reports, and exit codes.
+The repository currently contains the initial Rust CLI and local config handling. `prooflog init` creates local TOML config, and `prooflog doctor` reads it. Storage, ingestion, parser extraction, git correlation, reports, and final exit-code behavior are still planned roadmap work.
 
 ## Decision Rule
 
