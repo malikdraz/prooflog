@@ -5,6 +5,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
+use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 use tracing_subscriber::EnvFilter;
@@ -59,9 +60,11 @@ fn init_config(args: InitArgs) -> Result<()> {
     .with_overrides(args.db, args.codex_root);
 
     config.write_if_missing(&paths.config_file)?;
+    let storage = initialize_database(&config.db_path)?;
     print_config_status("Config:", &paths.config_file, &config);
+    print_storage_status(&storage);
     println!("Status:");
-    println!("  config created or already present");
+    println!("  init ok");
     Ok(())
 }
 
@@ -75,8 +78,10 @@ fn doctor_config(args: DoctorArgs) -> Result<()> {
             )
         })?
         .with_overrides(args.db, args.codex_root);
+    let storage = inspect_database(&config.db_path)?;
 
     print_config_status("Config:", &paths.config_file, &config);
+    print_storage_status(&storage);
     println!("Status:");
     println!("  config ok");
     Ok(())
@@ -93,6 +98,15 @@ fn print_config_status(heading: &str, config_file: &Path, config: &ProoflogConfi
     );
 }
 
+fn print_storage_status(status: &StorageStatus) {
+    println!("Storage:");
+    println!("  db: {}", status.db_path.display());
+    println!("  sqlite: ok");
+    println!("  migration: {}", status.migration_version);
+    println!("  fts5: ok");
+    println!("  journal: {}", status.journal_mode);
+}
+
 fn ensure_config_file_path(path: &Path) -> Result<()> {
     if path.is_file() {
         Ok(())
@@ -103,6 +117,250 @@ fn ensure_config_file_path(path: &Path) -> Result<()> {
         .context("invalid config path")
     }
 }
+
+#[derive(Debug)]
+struct StorageStatus {
+    db_path: PathBuf,
+    migration_version: i64,
+    journal_mode: String,
+}
+
+fn initialize_database(db_path: &Path) -> Result<StorageStatus> {
+    let parent = db_path
+        .parent()
+        .ok_or_else(|| StorageError::InvalidDbPath {
+            path: db_path.to_path_buf(),
+        })?;
+    fs::create_dir_all(parent)
+        .map_err(|source| StorageError::CreateDbDir {
+            path: parent.to_path_buf(),
+            source,
+        })
+        .with_context(|| format!("failed to initialize database {}", db_path.display()))?;
+
+    let conn = open_database(db_path)?;
+    apply_schema(&conn, db_path)?;
+    storage_status(&conn, db_path)
+}
+
+fn inspect_database(db_path: &Path) -> Result<StorageStatus> {
+    let conn = open_existing_database(db_path)?;
+    storage_status(&conn, db_path)
+}
+
+fn open_database(db_path: &Path) -> Result<Connection> {
+    if db_path.is_dir() {
+        return Err(StorageError::InvalidDbPath {
+            path: db_path.to_path_buf(),
+        })
+        .with_context(|| format!("failed to initialize database {}", db_path.display()));
+    }
+
+    let conn = Connection::open(db_path)
+        .map_err(|source| StorageError::OpenDb {
+            path: db_path.to_path_buf(),
+            source,
+        })
+        .with_context(|| format!("failed to initialize database {}", db_path.display()))?;
+    conn.pragma_update(None, "foreign_keys", "ON")
+        .map_err(|source| StorageError::ConfigureDb {
+            path: db_path.to_path_buf(),
+            source,
+        })
+        .with_context(|| format!("failed to initialize database {}", db_path.display()))?;
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .map_err(|source| StorageError::ConfigureDb {
+            path: db_path.to_path_buf(),
+            source,
+        })
+        .with_context(|| format!("failed to initialize database {}", db_path.display()))?;
+    Ok(conn)
+}
+
+fn open_existing_database(db_path: &Path) -> Result<Connection> {
+    if db_path.is_dir() {
+        return Err(StorageError::InvalidDbPath {
+            path: db_path.to_path_buf(),
+        })
+        .with_context(|| format!("failed to inspect database {}", db_path.display()));
+    }
+
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|source| StorageError::OpenDb {
+        path: db_path.to_path_buf(),
+        source,
+    })
+    .with_context(|| format!("failed to inspect database {}", db_path.display()))?;
+    conn.pragma_update(None, "foreign_keys", "ON")
+        .map_err(|source| StorageError::ConfigureDb {
+            path: db_path.to_path_buf(),
+            source,
+        })
+        .with_context(|| format!("failed to inspect database {}", db_path.display()))?;
+    Ok(conn)
+}
+
+fn apply_schema(conn: &Connection, db_path: &Path) -> Result<()> {
+    conn.execute_batch(SCHEMA_V1)
+        .map_err(|source| StorageError::ApplySchema {
+            path: db_path.to_path_buf(),
+            source,
+        })
+        .with_context(|| format!("failed to initialize database {}", db_path.display()))?;
+    Ok(())
+}
+
+fn storage_status(conn: &Connection, db_path: &Path) -> Result<StorageStatus> {
+    let migration_version = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|source| StorageError::InspectDb {
+            path: db_path.to_path_buf(),
+            source,
+        })
+        .with_context(|| format!("failed to inspect database {}", db_path.display()))?;
+    let journal_mode = conn
+        .query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))
+        .map_err(|source| StorageError::InspectDb {
+            path: db_path.to_path_buf(),
+            source,
+        })
+        .with_context(|| format!("failed to inspect database {}", db_path.display()))?;
+    conn.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS prooflog_fts5_probe USING fts5(value)",
+        [],
+    )
+    .map_err(|source| StorageError::FtsUnavailable {
+        path: db_path.to_path_buf(),
+        source,
+    })
+    .with_context(|| format!("failed to inspect database {}", db_path.display()))?;
+    conn.execute("DROP TABLE IF EXISTS prooflog_fts5_probe", [])
+        .map_err(|source| StorageError::InspectDb {
+            path: db_path.to_path_buf(),
+            source,
+        })
+        .with_context(|| format!("failed to inspect database {}", db_path.display()))?;
+
+    Ok(StorageStatus {
+        db_path: db_path.to_path_buf(),
+        migration_version,
+        journal_mode,
+    })
+}
+
+const SCHEMA_V1: &str = r#"
+PRAGMA user_version = 1;
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT OR IGNORE INTO schema_migrations (version) VALUES (1);
+
+CREATE TABLE IF NOT EXISTS codex_files (
+    id INTEGER PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE,
+    size_bytes INTEGER,
+    modified_at TEXT,
+    sha256 TEXT,
+    ingested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY,
+    codex_session_id TEXT UNIQUE,
+    workspace_path TEXT,
+    model TEXT,
+    title TEXT,
+    started_at TEXT,
+    ended_at TEXT,
+    event_count INTEGER NOT NULL DEFAULT 0,
+    parse_status TEXT NOT NULL DEFAULT 'unknown'
+);
+
+CREATE TABLE IF NOT EXISTS raw_events (
+    id INTEGER PRIMARY KEY,
+    codex_file_id INTEGER NOT NULL REFERENCES codex_files(id) ON DELETE CASCADE,
+    line_number INTEGER NOT NULL,
+    raw_json TEXT NOT NULL,
+    line_sha256 TEXT NOT NULL UNIQUE,
+    event_type TEXT,
+    event_time TEXT,
+    session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+    parse_error TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (codex_file_id, line_number)
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY,
+    raw_event_id INTEGER NOT NULL REFERENCES raw_events(id) ON DELETE CASCADE,
+    session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+    role TEXT,
+    text TEXT,
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS commands (
+    id INTEGER PRIMARY KEY,
+    raw_event_id INTEGER NOT NULL REFERENCES raw_events(id) ON DELETE CASCADE,
+    session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+    command TEXT NOT NULL,
+    cwd TEXT,
+    status TEXT,
+    exit_code INTEGER,
+    output TEXT,
+    started_at TEXT,
+    ended_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS approvals (
+    id INTEGER PRIMARY KEY,
+    raw_event_id INTEGER NOT NULL REFERENCES raw_events(id) ON DELETE CASCADE,
+    session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+    action TEXT,
+    decision TEXT,
+    sandbox_mode TEXT,
+    command TEXT,
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS file_changes (
+    id INTEGER PRIMARY KEY,
+    raw_event_id INTEGER NOT NULL REFERENCES raw_events(id) ON DELETE CASCADE,
+    session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+    path TEXT NOT NULL,
+    change_type TEXT,
+    diff_text TEXT,
+    lines_added INTEGER,
+    lines_deleted INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS proof_facts (
+    id INTEGER PRIMARY KEY,
+    session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+    command_id INTEGER REFERENCES commands(id) ON DELETE SET NULL,
+    file_change_id INTEGER REFERENCES file_changes(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL,
+    subject TEXT,
+    status TEXT NOT NULL,
+    reason TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS raw_events_fts
+USING fts5(raw_json, parse_error, content='raw_events', content_rowid='id');
+
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts
+USING fts5(text, content='messages', content_rowid='id');
+
+CREATE VIRTUAL TABLE IF NOT EXISTS command_output_fts
+USING fts5(command, output, content='commands', content_rowid='id');
+"#;
 
 #[derive(Debug)]
 struct ProoflogPaths {
@@ -237,6 +495,42 @@ enum ConfigError {
     WriteConfig {
         path: PathBuf,
         source: std::io::Error,
+    },
+}
+
+#[derive(Debug, thiserror::Error)]
+enum StorageError {
+    #[error("invalid database path: {path}")]
+    InvalidDbPath { path: PathBuf },
+    #[error("could not create database directory {path}")]
+    CreateDbDir {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("could not open database {path}")]
+    OpenDb {
+        path: PathBuf,
+        source: rusqlite::Error,
+    },
+    #[error("could not configure database {path}")]
+    ConfigureDb {
+        path: PathBuf,
+        source: rusqlite::Error,
+    },
+    #[error("could not apply database schema {path}")]
+    ApplySchema {
+        path: PathBuf,
+        source: rusqlite::Error,
+    },
+    #[error("could not inspect database {path}")]
+    InspectDb {
+        path: PathBuf,
+        source: rusqlite::Error,
+    },
+    #[error("SQLite FTS5 is unavailable for database {path}")]
+    FtsUnavailable {
+        path: PathBuf,
+        source: rusqlite::Error,
     },
 }
 

@@ -15,7 +15,7 @@ This directory is the repo-local starting point for ProofLog context.
 
 ## Current Repository State
 
-The repository currently contains the initial Rust CLI and local config handling. `prooflog init` creates local TOML config, and `prooflog doctor` reads it. Storage, ingestion, parser extraction, git correlation, reports, and final exit-code behavior are still planned roadmap work.
+The repository currently contains the initial Rust CLI, local config handling, and SQLite schema initialization. `prooflog init` creates local TOML config and initializes the DB schema, and `prooflog doctor` reports config and storage status. Ingestion, parser extraction, git correlation, reports, and final exit-code behavior are still planned roadmap work.
 
 ## Decision Rule
 

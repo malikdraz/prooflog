@@ -13,7 +13,7 @@ Raw events are the source of truth. Derived tables are disposable.
    - `rusqlite`
    - WAL mode
    - FTS5
-   - owner-only DB permissions
+   - owner-only DB permissions planned
 3. Codex discovery
    - configurable Codex root
    - recursive JSONL discovery
@@ -50,7 +50,7 @@ Raw events are the source of truth. Derived tables are disposable.
 
 ## Data Model Notes
 
-The planned MVP data model includes these tables:
+The current MVP schema initializes these tables:
 
 - `codex_files`
 - `sessions`
@@ -60,9 +60,9 @@ The planned MVP data model includes these tables:
 - `approvals`
 - `file_changes`
 - `proof_facts`
-- migration version table
+- `schema_migrations`
 
-The planned MVP also includes these FTS5 tables:
+The current MVP schema also initializes these FTS5 tables:
 
 - `raw_events_fts`
 - `messages_fts`

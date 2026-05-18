@@ -13,9 +13,9 @@ prooflog ingest --codex
 prooflog proof --since main
 ```
 
-`prooflog init` creates a local TOML config file.
+`prooflog init` creates a local TOML config file and initializes the local SQLite database schema.
 
-`prooflog doctor` reads the config file and prints resolved paths.
+`prooflog doctor` reads the config file and prints resolved paths plus storage status.
 
 The current config stores:
 
@@ -49,9 +49,9 @@ $HOME/.codex
 
 ## Planned Behavior
 
-`prooflog init` will later create local storage in addition to config.
+`prooflog init` will later add owner-only permission enforcement around local storage.
 
-`prooflog doctor` will later check database health, Codex history, SQLite capabilities, permissions, and git context.
+`prooflog doctor` will later check Codex history, database permissions, and git context.
 
 `prooflog ingest --codex` will discover and ingest local Codex JSONL history.
 
@@ -66,3 +66,25 @@ $HOME/.codex
 `prooflog init` and `prooflog doctor` support `--db <PATH>` and `--codex-root <PATH>` overrides.
 
 These contracts are covered by integration tests so future implementations keep the initial UX stable.
+
+## SQLite Schema
+
+The initialized DB records migration version `1` and creates these MVP tables:
+
+- `schema_migrations`
+- `codex_files`
+- `sessions`
+- `raw_events`
+- `messages`
+- `commands`
+- `approvals`
+- `file_changes`
+- `proof_facts`
+
+It also creates these FTS5 tables:
+
+- `raw_events_fts`
+- `messages_fts`
+- `command_output_fts`
+
+The schema is raw-first. Later parser and ingestion work will populate it.
