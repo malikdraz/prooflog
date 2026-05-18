@@ -1503,6 +1503,93 @@ fn doctor_does_not_create_missing_database() {
 }
 
 #[test]
+fn doctor_parser_reports_count_only_diagnostics() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("parser-diagnostics.jsonl"),
+        "{\"type\":\"session_meta\",\"session_id\":\"session-parser\",\"workspace_path\":\"/workspace/prooflog\",\"title\":\"Parser diagnostics\"}\n\
+         {\"type\":\"message\",\"session_id\":\"session-parser\",\"message\":{\"role\":\"user\",\"content\":\"SECRET_MESSAGE_TEXT\"}}\n\
+         {\"type\":\"command\",\"session_id\":\"session-parser\",\"command\":{\"cmd\":\"cargo test -- SECRET_COMMAND_ARG\",\"cwd\":\"/workspace/prooflog\",\"status\":\"success\",\"exit_code\":0,\"output\":\"SECRET_COMMAND_OUTPUT\"}}\n\
+         {\"type\":\"approval\",\"session_id\":\"session-parser\",\"approval\":{\"requested_action\":\"run\",\"decision\":\"approved\",\"command\":\"cargo test\"}}\n\
+         {\"type\":\"file_change\",\"session_id\":\"session-parser\",\"file_change\":{\"path\":\"src/main.rs\",\"change_type\":\"modified\"}}\n\
+         {\"unexpected\":true}\n\
+         not json SECRET_PARSE_TEXT\n",
+    )
+    .unwrap();
+
+    env.command()
+        .args(["init", "--codex-root", codex_root.to_str().unwrap()])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    env.command()
+        .args(["doctor", "--parser"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Parser diagnostics:")
+                .and(predicate::str::contains("raw events: 7"))
+                .and(predicate::str::contains("malformed lines: 1"))
+                .and(predicate::str::contains("unknown event shapes: 1"))
+                .and(predicate::str::contains("sessions: 1"))
+                .and(predicate::str::contains("messages: 1"))
+                .and(predicate::str::contains("commands: 1"))
+                .and(predicate::str::contains("approvals: 1"))
+                .and(predicate::str::contains("file changes: 1"))
+                .and(predicate::str::contains("proof facts: 1"))
+                .and(predicate::str::contains(
+                    "fixture reminder: add or update parser fixtures before changing parser behavior",
+                ))
+                .and(predicate::str::contains("SECRET_MESSAGE_TEXT").not())
+                .and(predicate::str::contains("SECRET_COMMAND_ARG").not())
+                .and(predicate::str::contains("SECRET_COMMAND_OUTPUT").not())
+                .and(predicate::str::contains("SECRET_PARSE_TEXT").not())
+                .and(predicate::str::contains("/workspace/prooflog").not()),
+        );
+}
+
+#[test]
+fn doctor_parser_missing_database_is_actionable() {
+    let env = CliEnv::new();
+    env.command().arg("init").assert().success();
+    fs::remove_file(env.db_file()).unwrap();
+
+    env.command()
+        .args(["doctor", "--parser"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("run `prooflog init` and `prooflog ingest --codex`").and(
+                predicate::str::contains(env.db_file().display().to_string()),
+            ),
+        );
+    assert!(!env.db_file().exists());
+}
+
+#[test]
+fn doctor_omits_parser_diagnostics_by_default() {
+    let env = CliEnv::new();
+    env.command().arg("init").assert().success();
+
+    env.command()
+        .arg("doctor")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Parser diagnostics:").not());
+}
+
+#[test]
 fn db_path_that_is_directory_reports_storage_error() {
     let env = CliEnv::new();
     let db_dir = env.home.path().join("db-is-directory");

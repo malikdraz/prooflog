@@ -15,7 +15,7 @@ This directory is the repo-local starting point for ProofLog context.
 
 ## Current Repository State
 
-The repository currently contains the initial Rust CLI, local config handling, SQLite schema initialization, owner-only config/DB file permissions on Unix-like systems, doctor readiness checks, Codex JSONL file discovery metadata, incremental raw JSONL line storage, raw/message/command-output FTS indexing for diagnostics, derived session/message/command/approval/file-change rows, verification/failure/resolution proof facts, proof-command git context plus changed-file detection, risky path and command classification, parser warning counts, report redaction for obvious secrets, session-to-repo correlation, a conservative READY/NOT READY/UNKNOWN decision section, plain text plus Markdown plus experimental JSON proof reports, and decision-based proof exit codes.
+The repository currently contains the initial Rust CLI, local config handling, SQLite schema initialization, owner-only config/DB file permissions on Unix-like systems, doctor readiness checks, count-only parser diagnostics, Codex JSONL file discovery metadata, incremental raw JSONL line storage, raw/message/command-output FTS indexing for diagnostics, derived session/message/command/approval/file-change rows, verification/failure/resolution proof facts, proof-command git context plus changed-file detection, risky path and command classification, parser warning counts, report redaction for obvious secrets, session-to-repo correlation, a conservative READY/NOT READY/UNKNOWN decision section, plain text plus Markdown plus experimental JSON proof reports, and decision-based proof exit codes.
 
 ## Decision Rule
 

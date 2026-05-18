@@ -9,6 +9,7 @@ The `prooflog` binary exists and exposes these top-level commands:
 ```bash
 prooflog init
 prooflog doctor
+prooflog doctor --parser
 prooflog ingest --codex
 prooflog proof --since main
 ```
@@ -18,6 +19,8 @@ prooflog proof --since main
 On Unix-like systems, `prooflog init` sets the config and DB files to owner-readable/writable only.
 
 `prooflog doctor` reads the config file and prints resolved paths, storage status, Codex root status, Codex JSONL count, and git repo status. On Unix-like systems, it warns when config or DB file permissions are broader than owner-only.
+
+`prooflog doctor --parser` reads local storage and prints count-only parser diagnostics for raw events, malformed lines, unknown event shapes, extracted rows, and proof facts. It does not print raw JSONL, parse errors, command output, message text, local source paths, or transcript excerpts.
 
 The current config stores:
 
@@ -426,3 +429,20 @@ If `prooflog doctor` finds broader permissions, it prints a warning with a `chmo
 - warnings for missing Codex root, no JSONL files, missing git repo, and unsafe file permissions
 
 Warnings are non-fatal. Critical config and database errors still return a non-zero exit code.
+
+## Parser Diagnostics
+
+`prooflog doctor --parser` reports local parser health from the existing SQLite database:
+
+- raw events
+- malformed lines
+- unknown event shapes
+- sessions
+- messages
+- commands
+- approvals
+- file changes
+- proof facts
+- fixture reminder
+
+The output is count-only and deterministic. It is intended for parser debugging and fixture maintenance, not browsing local session history. Missing local storage returns an actionable error asking the user to initialize and ingest before running parser diagnostics.

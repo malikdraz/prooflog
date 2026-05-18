@@ -9,7 +9,7 @@ use std::{
     process::{Command as ProcessCommand, ExitCode},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -82,6 +82,9 @@ fn doctor_config(args: DoctorArgs) -> Result<()> {
             )
         })?
         .with_overrides(args.db, args.codex_root);
+    if args.parser {
+        return doctor_parser(config);
+    }
     let storage = inspect_database(&config.db_path)?;
     let codex = inspect_codex(&config.codex_root);
     let git = inspect_git();
@@ -96,6 +99,19 @@ fn doctor_config(args: DoctorArgs) -> Result<()> {
     print_warnings(&warnings);
     println!("Status:");
     println!("  config ok");
+    Ok(())
+}
+
+fn doctor_parser(config: ProoflogConfig) -> Result<()> {
+    if !config.db_path.exists() {
+        bail!(
+            "run `prooflog init` and `prooflog ingest --codex` before parser diagnostics; database missing: {}",
+            config.db_path.display()
+        );
+    }
+    let conn = open_existing_database(&config.db_path)?;
+    let diagnostics = load_parser_diagnostics(&conn)?;
+    print_parser_diagnostics_report(&diagnostics);
     Ok(())
 }
 
@@ -984,6 +1000,23 @@ fn print_warnings(warnings: &[String]) {
     }
 }
 
+fn print_parser_diagnostics_report(diagnostics: &ParserDiagnostics) {
+    println!("Parser diagnostics:");
+    println!("  raw events: {}", diagnostics.raw_events);
+    println!("  malformed lines: {}", diagnostics.malformed_lines);
+    println!(
+        "  unknown event shapes: {}",
+        diagnostics.unknown_event_shapes
+    );
+    println!("  sessions: {}", diagnostics.sessions);
+    println!("  messages: {}", diagnostics.messages);
+    println!("  commands: {}", diagnostics.commands);
+    println!("  approvals: {}", diagnostics.approvals);
+    println!("  file changes: {}", diagnostics.file_changes);
+    println!("  proof facts: {}", diagnostics.proof_facts);
+    println!("  fixture reminder: add or update parser fixtures before changing parser behavior");
+}
+
 fn ensure_config_file_path(path: &Path) -> Result<()> {
     if path.is_file() {
         Ok(())
@@ -1092,6 +1125,19 @@ impl ParserWarningReport {
     fn has_warnings(&self) -> bool {
         self.malformed_lines > 0 || self.unknown_event_shapes > 0
     }
+}
+
+#[derive(Debug, Default)]
+struct ParserDiagnostics {
+    raw_events: i64,
+    malformed_lines: i64,
+    unknown_event_shapes: i64,
+    sessions: i64,
+    messages: i64,
+    commands: i64,
+    approvals: i64,
+    file_changes: i64,
+    proof_facts: i64,
 }
 
 #[derive(Debug)]
@@ -3150,6 +3196,10 @@ fn load_parser_warnings(db_path: &Path) -> Result<ParserWarningReport> {
     }
 
     let conn = open_existing_database(db_path)?;
+    load_parser_warnings_from_conn(&conn)
+}
+
+fn load_parser_warnings_from_conn(conn: &Connection) -> Result<ParserWarningReport> {
     conn.query_row(
         "SELECT
             COALESCE(SUM(CASE WHEN parse_error IS NOT NULL THEN 1 ELSE 0 END), 0),
@@ -3164,6 +3214,27 @@ fn load_parser_warnings(db_path: &Path) -> Result<ParserWarningReport> {
         },
     )
     .context("failed to load parser warning counts")
+}
+
+fn load_parser_diagnostics(conn: &Connection) -> Result<ParserDiagnostics> {
+    let warnings = load_parser_warnings_from_conn(conn)?;
+    Ok(ParserDiagnostics {
+        raw_events: count_table_rows(conn, "raw_events")?,
+        malformed_lines: warnings.malformed_lines,
+        unknown_event_shapes: warnings.unknown_event_shapes,
+        sessions: count_table_rows(conn, "sessions")?,
+        messages: count_table_rows(conn, "messages")?,
+        commands: count_table_rows(conn, "commands")?,
+        approvals: count_table_rows(conn, "approvals")?,
+        file_changes: count_table_rows(conn, "file_changes")?,
+        proof_facts: count_table_rows(conn, "proof_facts")?,
+    })
+}
+
+fn count_table_rows(conn: &Connection, table: &str) -> Result<i64> {
+    let sql = format!("SELECT COUNT(*) FROM {table}");
+    conn.query_row(&sql, [], |row| row.get(0))
+        .with_context(|| format!("failed to count {table} rows"))
 }
 
 fn classify_risky_commands(
@@ -4136,6 +4207,10 @@ struct DoctorArgs {
     /// Override the Codex history root.
     #[arg(long, value_name = "PATH")]
     codex_root: Option<PathBuf>,
+
+    /// Print count-only parser diagnostics from local storage.
+    #[arg(long)]
+    parser: bool,
 }
 
 #[derive(Debug, Args)]

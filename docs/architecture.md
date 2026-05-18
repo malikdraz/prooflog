@@ -9,6 +9,7 @@ Raw events are the source of truth. Derived tables are disposable.
 1. CLI layer
    - `clap`
    - commands: `init`, `doctor`, `ingest`, `proof`
+   - count-only parser diagnostics under `doctor --parser`
 2. Storage layer
    - `rusqlite`
    - WAL mode

@@ -65,12 +65,13 @@ Within 7 days of first usable release:
 
 ## Current Status
 
-ProofLog currently has an initial Rust CLI with local config path handling, SQLite schema initialization, owner-only file permissions on Unix-like systems, first-time `doctor` readiness output, Codex JSONL file discovery, incremental raw JSONL line storage, raw/message/command-output FTS indexing for diagnostics, derived session/message/command/approval/file-change rows, verification/failure/resolution proof facts, proof-command git context plus changed-file detection, risky path and command classification, parser warning counts, report redaction for obvious secrets, session-to-repo correlation, a conservative READY/NOT READY/UNKNOWN decision section, and plain text, Markdown, and experimental JSON proof reports. The binary builds and exposes the planned MVP command surface:
+ProofLog currently has an initial Rust CLI with local config path handling, SQLite schema initialization, owner-only file permissions on Unix-like systems, first-time `doctor` readiness output, count-only parser diagnostics, Codex JSONL file discovery, incremental raw JSONL line storage, raw/message/command-output FTS indexing for diagnostics, derived session/message/command/approval/file-change rows, verification/failure/resolution proof facts, proof-command git context plus changed-file detection, risky path and command classification, parser warning counts, report redaction for obvious secrets, session-to-repo correlation, a conservative READY/NOT READY/UNKNOWN decision section, and plain text, Markdown, and experimental JSON proof reports. The binary builds and exposes the planned MVP command surface:
 
 ```bash
 prooflog --help
 prooflog init
 prooflog doctor
+prooflog doctor --parser
 prooflog ingest --codex
 prooflog proof --since main
 ```
