@@ -1,0 +1,36 @@
+# Rust build output
+/target/
+
+# Local ProofLog reports and scratch output
+/prooflog.md
+/prooflog.json
+/prooflog.txt
+/prooflog.db
+/*.sqlite
+/*.sqlite3
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Editor and OS state
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Internal planning and private notes
+/internal/
+/private/
+/notes/
+/scratch/
+/tmp/
+*.local.md
+*.private.md
+*.internal.md

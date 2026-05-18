@@ -90,7 +90,7 @@ Before tagging:
 
 - [ ] Confirm `Cargo.toml` version is correct.
 - [ ] Confirm `Cargo.lock` is current.
-- [ ] Confirm docs mention only available install paths.
+- [ ] Confirm docs mention only available install paths and clearly label planned package channels.
 - [ ] Confirm the working tree is clean.
 - [ ] Confirm the release commit is the intended commit.
 
@@ -119,5 +119,7 @@ If package publishing is not ready, ship the source-based release only and keep 
 
 - [ ] Verify the public tag or release points at the intended commit.
 - [ ] Verify install instructions still work for the chosen release path.
+- [ ] Update the Homebrew tap formula with the release archive URL and sha256.
+- [ ] Run the tap checks before opening or merging tap changes.
 - [ ] Record any known limitations in public release notes.
 - [ ] Create follow-up issues for release problems instead of hiding them in private notes.

@@ -1,17 +1,34 @@
 # Installation
 
-This guide installs ProofLog from source and gets to a first local proof report.
+This guide installs ProofLog and gets to a first local proof report.
 
 ## Requirements
 
-- Rust `1.80` or newer
 - Git
-- A local checkout of this repository
 - Local Codex JSONL history, usually under `~/.codex`
+
+Source installs also require Rust `1.80` or newer.
 
 ProofLog is currently validated around macOS and Linux-style local paths. Windows support has not been validated yet.
 
 ProofLog stores data locally in SQLite. It does not upload Codex history, git state, command output, or reports.
+
+## Install With Homebrew
+
+Homebrew is the intended release channel:
+
+```bash
+brew tap malikdraz/tap
+brew install prooflog
+```
+
+Verify the install:
+
+```bash
+prooflog --help
+```
+
+The first Homebrew release is being prepared. Until the tap formula is published, use the source install below.
 
 ## Install From Source
 
@@ -33,15 +50,15 @@ If your shell cannot find `prooflog`, check that Cargo's bin directory is on you
 $HOME/.cargo/bin
 ```
 
-## Package Install
+## Crates.io Package
 
-This command is planned for a future packaged release, but is not available yet:
+This command is planned, but is not available yet:
 
 ```bash
 cargo install prooflog
 ```
 
-Use `cargo install --path .` from this repository until a package is published.
+Use Homebrew or `cargo install --path .` from this repository until a crates.io package is published.
 
 ## First Report
 

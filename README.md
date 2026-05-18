@@ -6,28 +6,16 @@ ProofLog is a local-first Rust + SQLite CLI that turns local Codex JSONL history
 prooflog proof --since main
 ```
 
-## Promise
+## Install
 
-ProofLog gives a senior engineer a deterministic, local answer to one question: is this agent-assisted change proven enough to review, merge, or hand off?
+Homebrew is the intended release channel:
 
-## Before And After
+```bash
+brew tap malikdraz/tap
+brew install prooflog
+```
 
-Before ProofLog, the evidence is scattered across terminal output, Codex transcripts, git diffs, approvals, and notes.
-
-After ProofLog, the evidence is summarized in one PR-pasteable report:
-
-- what changed
-- which local Codex sessions look relevant
-- which verification commands passed
-- which failures remain unresolved
-- which files or commands look risky
-- whether the change is `READY`, `NOT READY`, or `UNKNOWN`
-
-No cloud. No dashboard. No agent orchestration. No transcript browsing.
-
-## Install From Source
-
-ProofLog is currently installed from this repository:
+Until the first Homebrew release is published, install from source:
 
 ```bash
 git clone https://github.com/malikdraz/prooflog.git
@@ -35,11 +23,28 @@ cd prooflog
 cargo install --path .
 ```
 
-Requires a stable Rust toolchain and local access to the Codex JSONL history you want to inspect.
+Requirements: stable Rust `1.80` or newer for source installs, Git, and local access to the Codex JSONL history you want to inspect.
 
-See the [installation guide](docs/installation.md) for OS assumptions, path overrides, and troubleshooting.
+See the [installation guide](docs/installation.md) for path overrides and troubleshooting.
+
+## What It Does
+
+ProofLog gives a senior engineer a deterministic local answer to one question: is this agent-assisted change proven enough to review, merge, or hand off?
+
+It summarizes evidence that is normally scattered across terminal output, Codex transcripts, git diffs, approvals, and notes:
+
+- changed files
+- relevant local Codex sessions
+- passed verification commands
+- unresolved failures
+- risky files or commands
+- a conservative `READY`, `NOT READY`, or `UNKNOWN` decision
+
+ProofLog does not upload Codex history, git state, command output, or reports. It does not print raw transcript content by default.
 
 ## Quickstart
+
+Run these commands from the repository you want to inspect:
 
 ```bash
 prooflog init
@@ -171,7 +176,6 @@ ProofLog is not:
 - [Product requirements](docs/prd.md)
 - [Architecture notes](docs/architecture.md)
 - [Roadmap](docs/roadmap.md)
-- [Operating model](docs/operating-model.md)
 
 ## Design Principle
 

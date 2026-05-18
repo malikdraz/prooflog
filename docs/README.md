@@ -1,24 +1,32 @@
 # ProofLog Documentation
 
-This directory is the repo-local starting point for ProofLog context.
+This directory holds public project documentation for ProofLog.
 
-## Read Order
+Keep docs small and current. If a document does not help a user install, operate, contribute to, release, or understand ProofLog, prefer removing it or moving the detail into tests, CLI help, or code comments.
 
-1. [Product requirements](prd.md)
-2. [Architecture](architecture.md)
-3. [Roadmap](roadmap.md)
-4. [CLI behavior](cli.md)
-5. [Installation](installation.md)
-6. [Contributing](contributing.md)
-7. [Release checklist](release-checklist.md)
-8. [Parser fixtures](parser-fixtures.md)
-9. [Risk register](risks.md)
-10. [Operating model](operating-model.md)
-11. [Demo script](demo.md)
+## User Docs
+
+- [Installation](installation.md)
+- [CLI behavior](cli.md)
+- [Demo script](demo.md)
+
+## Contributor Docs
+
+- [Contributing](contributing.md)
+- [Parser fixtures](parser-fixtures.md)
+- [Release checklist](release-checklist.md)
+
+## Design Docs
+
+- [Product requirements](prd.md)
+- [Architecture](architecture.md)
+- [Roadmap](roadmap.md)
+- [Risk register](risks.md)
+- [Operating model](operating-model.md)
 
 ## Current Repository State
 
-The repository currently contains the initial Rust CLI, local config handling, SQLite schema initialization, owner-only config/DB file permissions on Unix-like systems, doctor readiness checks, count-only parser diagnostics, Codex JSONL file discovery metadata, incremental raw JSONL line storage, raw/message/command-output FTS indexing for diagnostics, derived session/message/command/approval/file-change rows, verification/failure/resolution proof facts, proof-command git context plus changed-file detection, risky path and command classification, parser warning counts, report redaction for obvious secrets, session-to-repo correlation, a conservative READY/NOT READY/UNKNOWN decision section, plain text plus Markdown plus experimental JSON proof reports, and decision-based proof exit codes.
+ProofLog currently includes the Rust CLI, local config, SQLite storage, doctor checks, Codex JSONL ingestion, parser diagnostics, git correlation, verification/failure/risk classification, report redaction, text/Markdown/experimental JSON proof reports, and decision-based exit codes.
 
 ## Decision Rule
 
