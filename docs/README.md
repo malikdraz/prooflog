@@ -9,6 +9,7 @@ Keep docs small and current. If a document does not help a user install, operate
 - [Installation](installation.md)
 - [CLI behavior](cli.md)
 - [Demo script](demo.md)
+- [Changelog](../CHANGELOG.md)
 
 ## Contributor Docs
 

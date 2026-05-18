@@ -172,6 +172,7 @@ ProofLog is not:
 - [Installation guide](docs/installation.md)
 - [Contributing guide](docs/contributing.md)
 - [Release checklist](docs/release-checklist.md)
+- [Changelog](CHANGELOG.md)
 - [CLI behavior](docs/cli.md)
 - [Product requirements](docs/prd.md)
 - [Architecture notes](docs/architecture.md)

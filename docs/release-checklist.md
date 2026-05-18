@@ -89,6 +89,7 @@ This check is local-only. Release notes may summarize the result, but must not i
 Before tagging:
 
 - [ ] Confirm `Cargo.toml` version is correct.
+- [ ] Add or update the matching `CHANGELOG.md` entry.
 - [ ] Confirm `Cargo.lock` is current.
 - [ ] Confirm docs mention only available install paths and clearly label planned package channels.
 - [ ] Confirm the working tree is clean.
@@ -100,7 +101,7 @@ Tag only after the checks above pass:
 git tag vX.Y.Z
 ```
 
-Do not push the tag until release notes and publish decisions are final.
+Push the tag only after release notes and publish decisions are final. The GitHub release workflow validates the tag against `Cargo.toml`, extracts the matching changelog section, runs release checks, and creates the GitHub release.
 
 ## 8. Publish Gate
 
