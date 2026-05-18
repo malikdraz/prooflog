@@ -1680,6 +1680,108 @@ fn repeated_ingest_skips_unchanged_and_updates_changed_files() {
 }
 
 #[test]
+fn repeated_ingest_large_history_skips_unchanged_files_without_raw_line_work() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    for index in 0..75 {
+        fs::write(
+            codex_root.join(format!("session-{index:03}.jsonl")),
+            format!("{{\"type\":\"session_meta\",\"session_id\":\"session-{index:03}\"}}\n"),
+        )
+        .unwrap();
+    }
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("files discovered: 75")
+                .and(predicate::str::contains("files ingested: 75"))
+                .and(predicate::str::contains("files skipped: 0"))
+                .and(predicate::str::contains("raw events stored: 75")),
+        );
+
+    assert_eq!(raw_event_rows(env.db_file()).len(), 75);
+
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("files discovered: 75")
+                .and(predicate::str::contains("files ingested: 0"))
+                .and(predicate::str::contains("files skipped: 75"))
+                .and(predicate::str::contains("raw events stored: 0"))
+                .and(predicate::str::contains("raw events skipped: 0")),
+        );
+
+    assert_eq!(raw_event_rows(env.db_file()).len(), 75);
+}
+
+#[test]
+fn changed_jsonl_file_removes_stale_raw_rows_after_shrinking() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    let file = codex_root.join("session.jsonl");
+    fs::write(
+        &file,
+        "{\"type\":\"session_meta\",\"session_id\":\"session-stale\"}\n{\"type\":\"message\",\"session_id\":\"session-stale\",\"message\":{\"role\":\"user\",\"content\":\"remove me\"}}\n",
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    fs::write(
+        &file,
+        "{\"type\":\"session_meta\",\"session_id\":\"session-stale\"}\n",
+    )
+    .unwrap();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("files ingested: 1")
+                .and(predicate::str::contains("raw events stored: 0"))
+                .and(predicate::str::contains("raw events removed: 1")),
+        );
+
+    let rows = raw_event_rows(env.db_file());
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].line_number, 1);
+    assert_eq!(message_rows(env.db_file()).len(), 0);
+    assert_eq!(raw_event_fts_match_count(env.db_file(), "remove"), 0);
+}
+
+#[test]
 fn ingest_stores_raw_jsonl_lines_and_parse_metadata() {
     let env = CliEnv::new();
     let codex_root = env.home.path().join("codex-history");
@@ -3135,7 +3237,7 @@ fn ingest_reports_and_skips_unreadable_jsonl_files() {
         .assert()
         .success()
         .stdout(
-            predicate::str::contains("files discovered: 1")
+            predicate::str::contains("files discovered: 2")
                 .and(predicate::str::contains("warnings: 1"))
                 .and(predicate::str::contains("Warnings:"))
                 .and(predicate::str::contains("could not read")),

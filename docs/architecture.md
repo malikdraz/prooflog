@@ -17,12 +17,14 @@ Raw events are the source of truth. Derived tables are disposable.
 3. Codex discovery
    - configurable Codex root
    - recursive JSONL discovery
-   - mtime and sha256 based incremental ingestion
+   - size and mtime fast skip before sha256/content reads
+   - sha256 based changed-file confirmation
    - symlinked directories skipped to avoid loops
 4. Raw ingestion
    - stores every non-empty line
    - records malformed lines
    - preserves unknown event shapes
+   - removes stale raw rows when changed files shrink
    - rebuilds raw event FTS for diagnostics
 5. Derived extraction
    - sessions derived during ingest

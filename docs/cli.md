@@ -252,7 +252,9 @@ For each discovered file, it records:
 - modified time
 - SHA-256 hash
 
-Repeated ingest skips unchanged file metadata and updates changed file metadata in place. Symlinked directories are skipped to avoid loops.
+Repeated ingest uses size and modified time as a fast unchanged-file gate before hashing or reading file content. New or metadata-changed files are SHA-256 hashed, and files with changed hashes are streamed into raw storage. If metadata changed but the hash is unchanged, file metadata is refreshed without re-parsing raw lines. Symlinked directories are skipped to avoid loops.
+
+This fast path is designed for local Codex history, where files are append-oriented and ordinary filesystem metadata is reliable. It does not try to detect adversarial same-size rewrites with a preserved modified time.
 
 ## Raw Event Storage
 
@@ -279,6 +281,7 @@ Current ingest output includes:
 - files skipped
 - raw events stored
 - raw events skipped
+- raw events removed
 - malformed lines
 - unknown event shapes
 - warning count

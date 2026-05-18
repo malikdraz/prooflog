@@ -121,6 +121,7 @@ fn ingest_codex(args: IngestArgs) -> Result<()> {
     println!("  files skipped: {}", summary.skipped);
     println!("  raw events stored: {}", summary.raw_events_stored);
     println!("  raw events skipped: {}", summary.raw_events_skipped);
+    println!("  raw events removed: {}", summary.raw_events_removed);
     println!("  malformed lines: {}", summary.malformed_lines);
     println!("  unknown event shapes: {}", summary.unknown_event_shapes);
     println!("  warnings: {}", summary.warnings.len());
@@ -1140,6 +1141,7 @@ struct IngestSummary {
     skipped: usize,
     raw_events_stored: usize,
     raw_events_skipped: usize,
+    raw_events_removed: usize,
     malformed_lines: usize,
     unknown_event_shapes: usize,
     warnings: Vec<String>,
@@ -1150,13 +1152,18 @@ struct DiscoveredCodexFile {
     path: PathBuf,
     size_bytes: u64,
     modified_at: String,
-    sha256: String,
 }
 
 #[derive(Debug)]
 struct RecordedCodexFile {
     id: i64,
     changed: bool,
+}
+
+#[derive(Debug)]
+enum CodexFileRecord {
+    Recorded(RecordedCodexFile),
+    Warning(String),
 }
 
 #[derive(Debug)]
@@ -1192,13 +1199,19 @@ fn discover_and_record_codex_files(conn: &mut Connection, root: &Path) -> Result
         .transaction()
         .context("failed to record discovered Codex files")?;
     for file in files {
-        let recorded_file = record_codex_file(&tx, &file)?;
+        let recorded_file = match record_codex_file(&tx, &file)? {
+            CodexFileRecord::Recorded(recorded_file) => recorded_file,
+            CodexFileRecord::Warning(warning) => {
+                summary.warnings.push(warning);
+                continue;
+            }
+        };
         if recorded_file.changed {
             summary.recorded += 1;
+            record_raw_events(&tx, recorded_file.id, &file.path, &mut summary)?;
         } else {
             summary.skipped += 1;
         }
-        record_raw_events(&tx, recorded_file.id, &file.path, &mut summary)?;
     }
     derive_sessions(&tx)?;
     derive_messages(&tx)?;
@@ -1281,8 +1294,6 @@ fn discover_jsonl_files(
 fn discover_jsonl_file(path: &Path) -> Result<DiscoveredCodexFile, String> {
     let metadata = fs::metadata(path)
         .map_err(|error| format!("could not read metadata for {}: {error}", path.display()))?;
-    let sha256 = hash_file_sha256(path)
-        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
     let modified_at = metadata
         .modified()
         .ok()
@@ -1294,7 +1305,6 @@ fn discover_jsonl_file(path: &Path) -> Result<DiscoveredCodexFile, String> {
         path: path.to_path_buf(),
         size_bytes: metadata.len(),
         modified_at,
-        sha256,
     })
 }
 
@@ -1312,39 +1322,46 @@ fn hash_file_sha256(path: &Path) -> std::io::Result<String> {
     Ok(hex_digest(hasher.finalize().as_slice()))
 }
 
-fn record_codex_file(conn: &Connection, file: &DiscoveredCodexFile) -> Result<RecordedCodexFile> {
+fn record_codex_file(conn: &Connection, file: &DiscoveredCodexFile) -> Result<CodexFileRecord> {
     let path = file.path.to_string_lossy().to_string();
-    let existing: Option<(i64, String)> = conn
+    let existing: Option<(i64, i64, String, String)> = conn
         .query_row(
-            "SELECT id, sha256 FROM codex_files WHERE path = ?1",
+            "SELECT id, size_bytes, modified_at, sha256 FROM codex_files WHERE path = ?1",
             [&path],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()
         .context("failed to inspect existing Codex file metadata")?;
 
-    if let Some((id, sha256)) = existing {
-        if sha256 == file.sha256 {
-            return Ok(RecordedCodexFile { id, changed: false });
+    if let Some((id, size_bytes, modified_at, _)) = &existing {
+        if *size_bytes == file.size_bytes as i64 && modified_at == &file.modified_at {
+            return Ok(CodexFileRecord::Recorded(RecordedCodexFile {
+                id: *id,
+                changed: false,
+            }));
         }
     }
 
-    conn.execute(
-        "INSERT INTO codex_files (path, size_bytes, modified_at, sha256, ingested_at)
-         VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
-         ON CONFLICT(path) DO UPDATE SET
-           size_bytes = excluded.size_bytes,
-           modified_at = excluded.modified_at,
-           sha256 = excluded.sha256,
-           ingested_at = CURRENT_TIMESTAMP",
-        (
-            &path,
-            file.size_bytes as i64,
-            &file.modified_at,
-            &file.sha256,
-        ),
-    )
-    .context("failed to record Codex file metadata")?;
+    let sha256 = match hash_file_sha256(&file.path) {
+        Ok(sha256) => sha256,
+        Err(error) => {
+            return Ok(CodexFileRecord::Warning(format!(
+                "could not read {}: {error}",
+                file.path.display()
+            )));
+        }
+    };
+    if let Some((id, _, _, existing_sha256)) = &existing {
+        if existing_sha256 == &sha256 {
+            upsert_codex_file_metadata(conn, file, &sha256)?;
+            return Ok(CodexFileRecord::Recorded(RecordedCodexFile {
+                id: *id,
+                changed: false,
+            }));
+        }
+    }
+
+    upsert_codex_file_metadata(conn, file, &sha256)?;
 
     let id = conn
         .query_row(
@@ -1354,7 +1371,30 @@ fn record_codex_file(conn: &Connection, file: &DiscoveredCodexFile) -> Result<Re
         )
         .context("failed to inspect recorded Codex file metadata")?;
 
-    Ok(RecordedCodexFile { id, changed: true })
+    Ok(CodexFileRecord::Recorded(RecordedCodexFile {
+        id,
+        changed: true,
+    }))
+}
+
+fn upsert_codex_file_metadata(
+    conn: &Connection,
+    file: &DiscoveredCodexFile,
+    sha256: &str,
+) -> Result<()> {
+    let path = file.path.to_string_lossy().to_string();
+    conn.execute(
+        "INSERT INTO codex_files (path, size_bytes, modified_at, sha256, ingested_at)
+         VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+         ON CONFLICT(path) DO UPDATE SET
+           size_bytes = excluded.size_bytes,
+           modified_at = excluded.modified_at,
+           sha256 = excluded.sha256,
+           ingested_at = CURRENT_TIMESTAMP",
+        (&path, file.size_bytes as i64, &file.modified_at, sha256),
+    )
+    .context("failed to record Codex file metadata")?;
+    Ok(())
 }
 
 fn record_raw_events(
@@ -1396,6 +1436,14 @@ fn record_raw_events(
             summary.raw_events_skipped += 1;
         }
     }
+
+    let removed = conn
+        .execute(
+            "DELETE FROM raw_events WHERE codex_file_id = ?1 AND line_number > ?2",
+            (codex_file_id, line_number),
+        )
+        .context("failed to remove stale raw Codex events")?;
+    summary.raw_events_removed += removed;
 
     Ok(())
 }
