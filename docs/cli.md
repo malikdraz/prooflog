@@ -27,7 +27,7 @@ The current config stores:
 
 `prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, derives session/message/command/approval/file-change rows, and classifies supported verification, failure, and failure-resolution evidence into local proof facts.
 
-`prooflog proof --since main` detects the current git repository context and prints repo root, branch or detached HEAD label, current HEAD, merge base, dirty working tree status, changed files, diff stats, docs-only status, risky changed paths, risky commands from relevant/ambiguous sessions, relevant/ambiguous Codex sessions from local storage, and a conservative READY/NOT READY/UNKNOWN decision section. It remains an explicit proof-report placeholder and does not produce the final report format yet.
+`prooflog proof --since main` emits a plain text proof report with scope, changed files, Codex evidence, verification, failures, risks, a conservative READY/NOT READY/UNKNOWN decision, why, and next steps.
 
 ## Local Paths
 
@@ -59,7 +59,7 @@ $HOME/.codex
 
 `prooflog ingest --codex` will later add additional proof facts as report needs harden.
 
-`prooflog proof --since main` will later produce the final core proof report format and exit-code mapping.
+`prooflog proof --since main` will later add Markdown/JSON output and final exit-code mapping.
 
 ## Current Argument Contract
 
@@ -145,7 +145,7 @@ Strong relevant signals include:
 - command cwd inside the repo
 - file-change paths overlapping changed files
 
-Weak file-name-only overlap is reported as ambiguous rather than hidden. Missing or empty local storage reports zero relevant and ambiguous sessions without failing this placeholder proof flow. Final proof reports and final decision exit codes are planned follow-up work.
+Weak file-name-only overlap is reported as ambiguous rather than hidden. Missing or empty local storage reports zero relevant and ambiguous sessions without failing the proof flow. Markdown/JSON reports and final decision exit codes are planned follow-up work.
 
 ## Proof Decision
 

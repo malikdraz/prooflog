@@ -138,23 +138,20 @@ fn proof_git_context(args: ProofArgs) -> Result<()> {
     let changed = inspect_changed_files(&git.repo_root, &git.merge_base)?;
     let correlation = correlate_sessions(&db_path, &git.repo_root, &changed)?;
 
-    println!("Git:");
-    println!("  repo: {}", git.repo_root.display());
-    println!("  branch: {}", git.branch);
-    println!("  head: {}", git.head);
-    println!("  merge base: {}", git.merge_base);
-    println!("  dirty: {}", if git.dirty { "yes" } else { "no" });
-    print_changed_files(&changed);
     let risk = classify_changed_risks(&changed);
-    print_risk_report(&risk);
     let risky_commands = classify_risky_commands(&db_path, &correlation)?;
-    print_risky_commands(&risky_commands);
-    print_session_correlation(&correlation);
     let decision = decide_proof(&db_path, &changed, &correlation)?;
-    print_proof_decision(&decision);
-    println!("Proof:");
-    println!("  since: {since}");
-    println!("  proof report: not implemented yet");
+    let report_facts = load_proof_report_facts(&db_path, &correlation)?;
+    print_plain_text_report(PlainTextReport {
+        since: &since,
+        git: &git,
+        changed: &changed,
+        risk: &risk,
+        risky_commands: &risky_commands,
+        correlation: &correlation,
+        facts: &report_facts,
+        decision: &decision,
+    });
     Ok(())
 }
 
@@ -167,6 +164,42 @@ fn resolve_proof_db_path(db_path: Option<PathBuf>) -> Result<PathBuf> {
     Ok(ProoflogConfig::read(&paths.config_file)
         .map(|config| config.db_path)
         .unwrap_or(paths.db_file))
+}
+
+struct PlainTextReport<'a> {
+    since: &'a str,
+    git: &'a ProofGitContext,
+    changed: &'a ChangedFiles,
+    risk: &'a RiskReport,
+    risky_commands: &'a RiskyCommandReport,
+    correlation: &'a SessionCorrelation,
+    facts: &'a [DecisionFact],
+    decision: &'a ProofDecision,
+}
+
+fn print_plain_text_report(report: PlainTextReport<'_>) {
+    println!("PROOFLOG REPORT");
+    print_report_scope(report.since, report.git);
+    print_changed_files(report.changed);
+    print_codex_evidence(report.correlation);
+    print_verification_report(report.facts);
+    print_failures_report(report.facts);
+    println!("Risks:");
+    print_risk_report(report.risk);
+    print_risky_commands(report.risky_commands);
+    print_proof_decision(report.decision);
+    print_why(report.decision);
+    print_next(report.decision);
+}
+
+fn print_report_scope(since: &str, git: &ProofGitContext) {
+    println!("Scope:");
+    println!("  repo: {}", git.repo_root.display());
+    println!("  branch: {}", git.branch);
+    println!("  since: {since}");
+    println!("  head: {}", git.head);
+    println!("  merge base: {}", git.merge_base);
+    println!("  dirty: {}", if git.dirty { "yes" } else { "no" });
 }
 
 fn print_changed_files(changed: &ChangedFiles) {
@@ -229,6 +262,87 @@ fn print_risky_commands(report: &RiskyCommandReport) {
     }
 }
 
+fn print_codex_evidence(correlation: &SessionCorrelation) {
+    println!("Codex evidence:");
+    print_session_correlation(correlation);
+}
+
+fn print_verification_report(facts: &[DecisionFact]) {
+    println!("Verification:");
+    let verification_facts = facts
+        .iter()
+        .filter(|fact| fact.kind == "verification")
+        .collect::<Vec<_>>();
+    println!("  facts: {}", verification_facts.len());
+    println!(
+        "  passed: {}",
+        verification_facts
+            .iter()
+            .filter(|fact| fact.status == "passed")
+            .count()
+    );
+    println!(
+        "  failed: {}",
+        verification_facts
+            .iter()
+            .filter(|fact| fact.status == "failed")
+            .count()
+    );
+    println!(
+        "  unknown: {}",
+        verification_facts
+            .iter()
+            .filter(|fact| fact.status == "unknown")
+            .count()
+    );
+    for fact in verification_facts {
+        println!(
+            "  {} {} {}",
+            fact.status,
+            fact.codex_session_id,
+            fact.subject.as_deref().unwrap_or("(unknown verification)")
+        );
+    }
+}
+
+fn print_failures_report(facts: &[DecisionFact]) {
+    println!("Failures:");
+    let failure_facts = facts
+        .iter()
+        .filter(|fact| fact.kind == "failure_resolution")
+        .collect::<Vec<_>>();
+    println!("  failure resolutions: {}", failure_facts.len());
+    println!(
+        "  unresolved: {}",
+        failure_facts
+            .iter()
+            .filter(|fact| fact.status == "unresolved")
+            .count()
+    );
+    println!(
+        "  resolved: {}",
+        failure_facts
+            .iter()
+            .filter(|fact| fact.status == "resolved")
+            .count()
+    );
+    println!(
+        "  ambiguous: {}",
+        failure_facts
+            .iter()
+            .filter(|fact| fact.status == "unknown")
+            .count()
+    );
+    for fact in failure_facts {
+        println!(
+            "  {} {} {}",
+            fact.status,
+            fact.codex_session_id,
+            fact.subject.as_deref().unwrap_or("(unknown verification)")
+        );
+    }
+}
+
 fn print_session_correlation(correlation: &SessionCorrelation) {
     println!("Codex:");
     println!("  relevant sessions: {}", correlation.relevant.len());
@@ -257,6 +371,23 @@ fn print_proof_decision(decision: &ProofDecision) {
     for reason in &decision.reasons {
         println!("  reason: {reason}");
     }
+}
+
+fn print_why(decision: &ProofDecision) {
+    println!("Why:");
+    for reason in &decision.reasons {
+        println!("  reason: {reason}");
+    }
+}
+
+fn print_next(decision: &ProofDecision) {
+    println!("Next:");
+    let next = match decision.status {
+        "READY" => "review and paste the report where proof is needed",
+        "NOT READY" => "resolve the listed verification failures and rerun proof",
+        _ => "ingest local Codex history or run verification, then rerun proof",
+    };
+    println!("  {next}");
 }
 
 fn print_config_status(heading: &str, config_file: &Path, config: &ProoflogConfig) {
@@ -2394,6 +2525,19 @@ fn load_decision_facts(
             ))
     });
     Ok(facts)
+}
+
+fn load_proof_report_facts(
+    db_path: &Path,
+    correlation: &SessionCorrelation,
+) -> Result<Vec<DecisionFact>> {
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let conn = open_existing_database(db_path)?;
+    let relevant_sessions = correlated_sessions_by_id(&correlation.relevant);
+    load_decision_facts(&conn, &relevant_sessions)
 }
 
 fn classify_risky_commands(

@@ -54,4 +54,4 @@ When parser fixture behavior intentionally changes, update snapshots explicitly:
 INSTA_UPDATE=always cargo test --test parser_fixtures
 ```
 
-Review the snapshot diff before committing. Final proof report snapshots are planned for the report renderer work; they are not implemented yet.
+Review the snapshot diff before committing. Dedicated proof report snapshots are planned for future report-format hardening.

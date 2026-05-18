@@ -41,13 +41,25 @@ fn ingest_requires_source_flag() {
 }
 
 #[test]
-fn proof_command_is_explicitly_unimplemented() {
+fn proof_prints_plain_text_report_sections() {
     let mut proof = Command::cargo_bin("prooflog").unwrap();
     proof
         .args(["proof", "--since", "main"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("not implemented yet"));
+        .stdout(
+            predicate::str::contains("PROOFLOG REPORT")
+                .and(predicate::str::contains("Scope:"))
+                .and(predicate::str::contains("Changed:"))
+                .and(predicate::str::contains("Codex evidence:"))
+                .and(predicate::str::contains("Verification:"))
+                .and(predicate::str::contains("Failures:"))
+                .and(predicate::str::contains("Risks:"))
+                .and(predicate::str::contains("Decision:"))
+                .and(predicate::str::contains("Why:"))
+                .and(predicate::str::contains("Next:"))
+                .and(predicate::str::contains("not implemented yet").not()),
+        );
 }
 
 #[test]
@@ -61,7 +73,7 @@ fn proof_reports_git_context_for_repo_override() {
         .assert()
         .success()
         .stdout(
-            predicate::str::contains("Git:")
+            predicate::str::contains("Scope:")
                 .and(predicate::str::contains(format!(
                     "repo: {}",
                     repo.canonicalize().unwrap().display()
@@ -69,10 +81,7 @@ fn proof_reports_git_context_for_repo_override() {
                 .and(predicate::str::contains("branch: main"))
                 .and(predicate::str::contains("head: "))
                 .and(predicate::str::contains("merge base: "))
-                .and(predicate::str::contains("dirty: yes"))
-                .and(predicate::str::contains(
-                    "proof report: not implemented yet",
-                )),
+                .and(predicate::str::contains("dirty: yes")),
         );
 }
 
@@ -611,6 +620,11 @@ fn proof_decision_ready_with_relevant_passing_verification() {
         .stdout(
             predicate::str::contains("Decision:")
                 .and(predicate::str::contains("status: READY"))
+                .and(predicate::str::contains("Why:"))
+                .and(predicate::str::contains("Next:"))
+                .and(predicate::str::contains(
+                    "review and paste the report where proof is needed",
+                ))
                 .and(predicate::str::contains(
                     "reason: relevant verification passed: session-ready cargo test",
                 ))
@@ -669,6 +683,11 @@ fn proof_decision_ready_with_resolved_fail_then_pass() {
         .stdout(
             predicate::str::contains("Decision:")
                 .and(predicate::str::contains("status: READY"))
+                .and(predicate::str::contains("Why:"))
+                .and(predicate::str::contains("Next:"))
+                .and(predicate::str::contains(
+                    "review and paste the report where proof is needed",
+                ))
                 .and(predicate::str::contains(
                     "reason: resolved verification failure: session-resolved cargo test",
                 ))
@@ -725,6 +744,11 @@ fn proof_decision_not_ready_with_unresolved_relevant_failure() {
         .stdout(
             predicate::str::contains("Decision:")
                 .and(predicate::str::contains("status: NOT READY"))
+                .and(predicate::str::contains("Why:"))
+                .and(predicate::str::contains("Next:"))
+                .and(predicate::str::contains(
+                    "resolve the listed verification failures and rerun proof",
+                ))
                 .and(predicate::str::contains(
                     "reason: unresolved verification failure: session-not-ready cargo test",
                 ))
@@ -754,6 +778,11 @@ fn proof_decision_unknown_when_db_is_missing() {
         .stdout(
             predicate::str::contains("Decision:")
                 .and(predicate::str::contains("status: UNKNOWN"))
+                .and(predicate::str::contains("Why:"))
+                .and(predicate::str::contains("Next:"))
+                .and(predicate::str::contains(
+                    "ingest local Codex history or run verification, then rerun proof",
+                ))
                 .and(predicate::str::contains(
                     "reason: local proof database is missing",
                 )),
@@ -803,6 +832,8 @@ fn proof_decision_unknown_without_relevant_sessions() {
         .stdout(
             predicate::str::contains("Decision:")
                 .and(predicate::str::contains("status: UNKNOWN"))
+                .and(predicate::str::contains("Why:"))
+                .and(predicate::str::contains("Next:"))
                 .and(predicate::str::contains(
                     "reason: no relevant Codex sessions",
                 )),
@@ -856,6 +887,8 @@ fn proof_decision_unknown_without_verification_evidence() {
         .stdout(
             predicate::str::contains("Decision:")
                 .and(predicate::str::contains("status: UNKNOWN"))
+                .and(predicate::str::contains("Why:"))
+                .and(predicate::str::contains("Next:"))
                 .and(predicate::str::contains(
                     "reason: no relevant verification evidence",
                 )),
@@ -908,6 +941,8 @@ fn proof_decision_unknown_with_ambiguous_only_evidence() {
         .stdout(
             predicate::str::contains("Decision:")
                 .and(predicate::str::contains("status: UNKNOWN"))
+                .and(predicate::str::contains("Why:"))
+                .and(predicate::str::contains("Next:"))
                 .and(predicate::str::contains(
                     "reason: only ambiguous verification evidence found",
                 )),

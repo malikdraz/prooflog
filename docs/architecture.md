@@ -43,10 +43,10 @@ Raw events are the source of truth. Derived tables are disposable.
    - verification detectors
    - conservative READY/NOT READY/UNKNOWN decision
 8. Report renderer
-   - plain text
-   - Markdown
+   - plain text report
+   - Markdown report planned
    - deterministic output
-   - useful exit codes
+   - useful exit codes planned
 
 ## Data Model Notes
 

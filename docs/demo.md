@@ -1,6 +1,6 @@
 # Demo Script
 
-This is the target first-demo flow. `init`, `doctor`, JSONL file discovery, raw JSONL line storage, raw/message/command-output FTS indexing, session/message/command/approval/file-change derivation, verification/failure/resolution proof facts, proof-command git context plus changed-file detection, risky path and command classification, session-to-repo correlation, and conservative READY/NOT READY/UNKNOWN decisions are implemented; final proof report generation is still planned.
+This is the target first-demo flow. `init`, `doctor`, JSONL file discovery, raw JSONL line storage, raw/message/command-output FTS indexing, session/message/command/approval/file-change derivation, verification/failure/resolution proof facts, proof-command git context plus changed-file detection, risky path and command classification, session-to-repo correlation, conservative READY/NOT READY/UNKNOWN decisions, and plain text proof reports are implemented; Markdown/JSON output and final exit-code behavior are still planned.
 
 ```bash
 cargo install --path .
@@ -13,7 +13,8 @@ prooflog ingest --codex --codex-root ~/.codex
 
 prooflog proof --since main
 
-prooflog proof --since main --format md > prooflog.md
+# Planned follow-up:
+# prooflog proof --since main --format md > prooflog.md
 ```
 
 ## Expected Doctor Output
@@ -53,33 +54,57 @@ Status:
 PROOFLOG REPORT
 
 Scope:
-  repo: example-project
+  repo: /home/user/src/example-project
   branch: feature/example-change
-  range: main..HEAD
+  since: main
+  head: abc123
+  merge base: def456
+  dirty: no
 
 Changed:
   files: 18
-  risky areas:
-    auth
-    config
+  additions: 240
+  deletions: 41
+  docs only: no
+  M src/auth/session.go (+120 -12)
 
 Codex evidence:
-  sessions: 3
-  commands: 47
-  approvals: 4
+Codex:
+  relevant sessions: 3
+  ambiguous sessions: 0
+  session-a Auth fix [workspace, command-cwd]
 
 Verification:
-  PASS go test ./...
-  PASS make lint
-  FAIL npm run lint
-       unresolved
+  facts: 3
+  passed: 2
+  failed: 1
+  unknown: 0
+  passed session-a go test ./...
+  failed session-a npm run lint
+
+Failures:
+  failure resolutions: 1
+  unresolved: 1
+  resolved: 0
+  ambiguous: 0
+  unresolved session-a npm run lint
+
+Risks:
+Risk:
+  risk level: elevated
+  risky files: 1
+  auth: src/auth/session.go (authentication or authorization path)
+Risky commands:
+  relevant: 0
+  ambiguous: 0
 
 Decision:
-  NOT READY
+  status: NOT READY
+  reason: unresolved verification failure: session-a npm run lint
 
 Why:
-  observed unresolved lint failure after agent edits
+  reason: unresolved verification failure: session-a npm run lint
 
 Next:
-  rerun npm run lint or fix the failure
+  resolve the listed verification failures and rerun proof
 ```
