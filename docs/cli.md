@@ -34,19 +34,14 @@ The current config stores:
 
 ## Local Paths
 
-When `XDG_CONFIG_HOME` and `XDG_DATA_HOME` are set, ProofLog uses:
+ProofLog uses one app-owned local home directory by default:
 
 ```text
-$XDG_CONFIG_HOME/prooflog/config.toml
-$XDG_DATA_HOME/prooflog/prooflog.db
+$HOME/.prooflog/config.toml
+$HOME/.prooflog/prooflog.db
 ```
 
-When those variables are not set, ProofLog falls back to:
-
-```text
-$HOME/.config/prooflog/config.toml
-$HOME/.local/share/prooflog/prooflog.db
-```
+If `HOME` is not set, ProofLog falls back to `USERPROFILE` for Windows-style environments.
 
 The default Codex root is:
 

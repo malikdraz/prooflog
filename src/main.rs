@@ -3894,20 +3894,15 @@ struct ProoflogPaths {
 impl ProoflogPaths {
     fn resolve() -> Result<Self> {
         let home = env::var_os("HOME")
+            .or_else(|| env::var_os("USERPROFILE"))
             .map(PathBuf::from)
             .ok_or(ConfigError::MissingHome)
             .context("failed to resolve ProofLog local paths")?;
-
-        let config_home = env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".config"));
-        let data_home = env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".local").join("share"));
+        let prooflog_home = home.join(".prooflog");
 
         Ok(Self {
-            config_file: config_home.join("prooflog").join("config.toml"),
-            db_file: data_home.join("prooflog").join("prooflog.db"),
+            config_file: prooflog_home.join("config.toml"),
+            db_file: prooflog_home.join("prooflog.db"),
             codex_root: home.join(".codex"),
         })
     }
@@ -4063,9 +4058,7 @@ struct RedactionConfig {
 
 #[derive(Debug, thiserror::Error)]
 enum ConfigError {
-    #[error(
-        "HOME is not set; set HOME or XDG_CONFIG_HOME and XDG_DATA_HOME before running ProofLog"
-    )]
+    #[error("home directory is not set; set HOME or USERPROFILE before running ProofLog")]
     MissingHome,
     #[error("invalid config path: {path}")]
     InvalidConfigPath { path: PathBuf },

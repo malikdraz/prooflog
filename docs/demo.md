@@ -24,13 +24,13 @@ prooflog proof --since main --format json > prooflog.json
 prooflog doctor
 
 Config:
-  path: /home/user/.config/prooflog/config.toml
-  db: /home/user/.local/share/prooflog/prooflog.db
+  path: /home/user/.prooflog/config.toml
+  db: /home/user/.prooflog/prooflog.db
   codex root: /home/user/.codex
   redaction: secrets=true, local_paths=true
 
 Storage:
-  db: /home/user/.local/share/prooflog/prooflog.db
+  db: /home/user/.prooflog/prooflog.db
   sqlite: ok
   migration: 2
   fts5: ok

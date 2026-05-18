@@ -1405,33 +1405,46 @@ fn invalid_config_path_reports_actionable_error() {
 }
 
 #[test]
-fn missing_home_reports_actionable_error() {
+fn missing_home_and_userprofile_reports_actionable_error() {
     let mut cmd = Command::cargo_bin("prooflog").unwrap();
     cmd.env_clear()
         .arg("init")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("HOME is not set"));
+        .stderr(predicate::str::contains("home directory is not set"));
 }
 
 #[test]
-fn missing_xdg_vars_falls_back_under_home() {
+fn default_paths_live_under_prooflog_home_directory() {
     let home = tempfile::tempdir().unwrap();
-    let config_file = home
-        .path()
-        .join(".config")
-        .join("prooflog")
-        .join("config.toml");
-    let db_file = home
-        .path()
-        .join(".local")
-        .join("share")
-        .join("prooflog")
-        .join("prooflog.db");
+    let prooflog_home = home.path().join(".prooflog");
+    let config_file = prooflog_home.join("config.toml");
+    let db_file = prooflog_home.join("prooflog.db");
 
     let mut cmd = Command::cargo_bin("prooflog").unwrap();
     cmd.env_clear()
         .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path().join("ignored-config"))
+        .env("XDG_DATA_HOME", home.path().join("ignored-data"))
+        .arg("init")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(config_file.display().to_string()));
+
+    let config = fs::read_to_string(config_file).unwrap();
+    assert!(config.contains(&format!("db_path = \"{}\"", db_file.display())));
+}
+
+#[test]
+fn default_paths_fall_back_to_userprofile_when_home_is_missing() {
+    let userprofile = tempfile::tempdir().unwrap();
+    let prooflog_home = userprofile.path().join(".prooflog");
+    let config_file = prooflog_home.join("config.toml");
+    let db_file = prooflog_home.join("prooflog.db");
+
+    let mut cmd = Command::cargo_bin("prooflog").unwrap();
+    cmd.env_clear()
+        .env("USERPROFILE", userprofile.path())
         .arg("init")
         .assert()
         .success()
@@ -3335,25 +3348,18 @@ fn ingest_reports_and_skips_unreadable_jsonl_files() {
 
 struct CliEnv {
     home: TempDir,
-    config_home: TempDir,
-    data_home: TempDir,
 }
 
 impl CliEnv {
     fn new() -> Self {
         Self {
             home: tempfile::tempdir().unwrap(),
-            config_home: tempfile::tempdir().unwrap(),
-            data_home: tempfile::tempdir().unwrap(),
         }
     }
 
     fn command(&self) -> Command {
         let mut cmd = Command::cargo_bin("prooflog").unwrap();
-        cmd.env_clear()
-            .env("HOME", self.home.path())
-            .env("XDG_CONFIG_HOME", self.config_home.path())
-            .env("XDG_DATA_HOME", self.data_home.path());
+        cmd.env_clear().env("HOME", self.home.path());
         if let Some(path) = std::env::var_os("PATH") {
             cmd.env("PATH", path);
         }
@@ -3367,11 +3373,11 @@ impl CliEnv {
     }
 
     fn config_file(&self) -> std::path::PathBuf {
-        self.config_home.path().join("prooflog").join("config.toml")
+        self.home.path().join(".prooflog").join("config.toml")
     }
 
     fn db_file(&self) -> std::path::PathBuf {
-        self.data_home.path().join("prooflog").join("prooflog.db")
+        self.home.path().join(".prooflog").join("prooflog.db")
     }
 }
 

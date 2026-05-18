@@ -105,19 +105,14 @@ prooflog proof --since main --format json > prooflog.json
 
 ## Local Files
 
-When `XDG_CONFIG_HOME` and `XDG_DATA_HOME` are set, ProofLog uses:
+ProofLog stores its local config and SQLite database under one app-owned directory:
 
 ```text
-$XDG_CONFIG_HOME/prooflog/config.toml
-$XDG_DATA_HOME/prooflog/prooflog.db
+$HOME/.prooflog/config.toml
+$HOME/.prooflog/prooflog.db
 ```
 
-Otherwise it falls back to:
-
-```text
-$HOME/.config/prooflog/config.toml
-$HOME/.local/share/prooflog/prooflog.db
-```
+If `HOME` is not set, ProofLog falls back to `USERPROFILE` for Windows-style environments.
 
 You can override the database path when needed:
 
