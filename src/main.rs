@@ -146,6 +146,7 @@ fn proof_git_context(args: ProofArgs) -> Result<ExitCode> {
 
     let risk = classify_changed_risks(&changed);
     let risky_commands = classify_risky_commands(&db_path, &correlation)?;
+    let parser_warnings = load_parser_warnings(&db_path)?;
     let decision = decide_proof(&db_path, &changed, &correlation)?;
     let report_facts = load_proof_report_facts(&db_path, &correlation)?;
     let report = ProofReport {
@@ -154,6 +155,7 @@ fn proof_git_context(args: ProofArgs) -> Result<ExitCode> {
         changed: &changed,
         risk: &risk,
         risky_commands: &risky_commands,
+        parser_warnings: &parser_warnings,
         correlation: &correlation,
         facts: &report_facts,
         decision: &decision,
@@ -198,6 +200,7 @@ struct ProofReport<'a> {
     changed: &'a ChangedFiles,
     risk: &'a RiskReport,
     risky_commands: &'a RiskyCommandReport,
+    parser_warnings: &'a ParserWarningReport,
     correlation: &'a SessionCorrelation,
     facts: &'a [DecisionFact],
     decision: &'a ProofDecision,
@@ -208,6 +211,7 @@ fn print_plain_text_report(report: ProofReport<'_>) {
     print_report_scope(report.since, report.git);
     print_changed_files(report.changed);
     print_codex_evidence(report.correlation);
+    print_parser_warnings(report.parser_warnings);
     print_verification_report(report.facts);
     print_failures_report(report.facts);
     println!("Risks:");
@@ -289,6 +293,7 @@ fn print_markdown_report(report: ProofReport<'_>) {
     }
     println!();
 
+    print_markdown_parser_warnings(report.parser_warnings);
     print_markdown_verification(report.facts);
     print_markdown_failures(report.facts);
     print_markdown_risks(report.risk, report.risky_commands);
@@ -316,6 +321,18 @@ fn print_markdown_session(kind: &str, session: &CorrelatedSession) {
         md_cell(session.title.as_deref().unwrap_or("(untitled)")),
         md_cell(session.signals.join(", "))
     );
+}
+
+fn print_markdown_parser_warnings(warnings: &ParserWarningReport) {
+    if !warnings.has_warnings() {
+        return;
+    }
+
+    println!("## Parser Warnings");
+    println!();
+    println!("- malformed lines: {}", warnings.malformed_lines);
+    println!("- unknown event shapes: {}", warnings.unknown_event_shapes);
+    println!();
 }
 
 fn print_markdown_verification(facts: &[DecisionFact]) {
@@ -491,6 +508,10 @@ fn print_json_report(report: ProofReport<'_>) -> Result<()> {
             "ambiguous_sessions_count": report.correlation.ambiguous.len(),
             "relevant_sessions": report.correlation.relevant.iter().map(json_correlated_session).collect::<Vec<_>>(),
             "ambiguous_sessions": report.correlation.ambiguous.iter().map(json_correlated_session).collect::<Vec<_>>(),
+        },
+        "parser_warnings": {
+            "malformed_lines": report.parser_warnings.malformed_lines,
+            "unknown_event_shapes": report.parser_warnings.unknown_event_shapes,
         },
         "verification": json_verification(report.facts),
         "failures": json_failures(report.facts),
@@ -672,6 +693,16 @@ fn print_risky_commands(report: &RiskyCommandReport) {
 fn print_codex_evidence(correlation: &SessionCorrelation) {
     println!("Codex evidence:");
     print_session_correlation(correlation);
+}
+
+fn print_parser_warnings(warnings: &ParserWarningReport) {
+    if !warnings.has_warnings() {
+        return;
+    }
+
+    println!("Parser warnings:");
+    println!("  malformed lines: {}", warnings.malformed_lines);
+    println!("  unknown event shapes: {}", warnings.unknown_event_shapes);
 }
 
 fn print_verification_report(facts: &[DecisionFact]) {
@@ -945,6 +976,18 @@ struct RiskyCommandFinding {
     severity: &'static str,
     reason: &'static str,
     command: String,
+}
+
+#[derive(Debug, Default)]
+struct ParserWarningReport {
+    malformed_lines: i64,
+    unknown_event_shapes: i64,
+}
+
+impl ParserWarningReport {
+    fn has_warnings(&self) -> bool {
+        self.malformed_lines > 0 || self.unknown_event_shapes > 0
+    }
 }
 
 #[derive(Debug)]
@@ -2948,6 +2991,28 @@ fn load_proof_report_facts(
     let conn = open_existing_database(db_path)?;
     let relevant_sessions = correlated_sessions_by_id(&correlation.relevant);
     load_decision_facts(&conn, &relevant_sessions)
+}
+
+fn load_parser_warnings(db_path: &Path) -> Result<ParserWarningReport> {
+    if !db_path.exists() {
+        return Ok(ParserWarningReport::default());
+    }
+
+    let conn = open_existing_database(db_path)?;
+    conn.query_row(
+        "SELECT
+            COALESCE(SUM(CASE WHEN parse_error IS NOT NULL THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN parse_error IS NULL AND event_type IS NULL THEN 1 ELSE 0 END), 0)
+         FROM raw_events",
+        [],
+        |row| {
+            Ok(ParserWarningReport {
+                malformed_lines: row.get(0)?,
+                unknown_event_shapes: row.get(1)?,
+            })
+        },
+    )
+    .context("failed to load parser warning counts")
 }
 
 fn classify_risky_commands(

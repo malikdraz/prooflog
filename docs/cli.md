@@ -27,7 +27,7 @@ The current config stores:
 
 `prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, derives session/message/command/approval/file-change rows, and classifies supported verification, failure, and failure-resolution evidence into local proof facts.
 
-`prooflog proof --since main` emits a proof report with scope, changed files, Codex evidence, verification, failures, risks, a conservative READY/NOT READY/UNKNOWN decision, why, and next steps. The default output is plain text. Use `--format md` for a PR-pasteable Markdown report, `--format json` for experimental machine-readable output, or `--format text` to request plain text explicitly.
+`prooflog proof --since main` emits a proof report with scope, changed files, Codex evidence, parser warning counts, verification, failures, risks, a conservative READY/NOT READY/UNKNOWN decision, why, and next steps. The default output is plain text. Use `--format md` for a PR-pasteable Markdown report, `--format json` for experimental machine-readable output, or `--format text` to request plain text explicitly.
 
 ## Local Paths
 
@@ -86,6 +86,7 @@ It prints:
 - total additions and deletions
 - docs-only status
 - per-file status, path, additions, and deletions
+- parser warning counts when malformed or unknown raw events exist
 - risky path level, count, categories, and reasons
 - risky command counts, families, severity, and reasons
 - conservative proof decision status and reasons
@@ -147,6 +148,17 @@ Strong relevant signals include:
 
 Weak file-name-only overlap is reported as ambiguous rather than hidden. Missing or empty local storage reports zero relevant and ambiguous sessions without failing the proof flow.
 
+## Parser Warnings
+
+`prooflog proof --since <REF>` reports grouped parser warning counts when local raw events contain malformed JSONL lines or unknown valid event shapes.
+
+Parser warnings include:
+
+- malformed lines
+- unknown event shapes
+
+These warnings are counts only. Proof reports do not print raw JSONL content, parse error text, raw transcript text, local source file paths, or command output by default. Missing or empty local storage reports zero parser warnings.
+
 ## Proof Decision
 
 `prooflog proof --since <REF>` prints a `Decision:` section with `status: READY`, `status: NOT READY`, or `status: UNKNOWN`, plus one or more deterministic `reason:` lines.
@@ -168,13 +180,14 @@ The JSON report includes:
 - `scope`: repo, branch, since ref, HEAD, merge base, and dirty state
 - `changed`: changed-file counts, diff stats, docs-only state, and per-file summaries
 - `codex`: relevant and ambiguous session summaries and correlation signals
+- `parser_warnings`: malformed line and unknown event-shape counts
 - `verification`: safe verification fact counts and summaries
 - `failures`: safe failure-resolution counts and summaries
 - `risks`: risky changed-path and risky-command summaries
 - `decision`: READY/NOT READY/UNKNOWN status and reasons
 - `next_actions`: suggested next steps
 
-The JSON report does not include raw transcript text, raw command output, or raw diff text by default. It uses the same decision and exit-code behavior as plain text and Markdown.
+The JSON report does not include raw transcript text, raw command output, raw parse error text, raw JSONL content, or raw diff text by default. It uses the same decision and exit-code behavior as plain text and Markdown.
 
 ## Proof Exit Codes
 
@@ -237,6 +250,8 @@ Each raw event row records:
 - parse error when the line is malformed JSON
 
 Malformed JSON lines do not abort ingest. Unknown valid JSON shapes are preserved with NULL derived metadata. Empty lines are skipped and counted in ingest output.
+
+`prooflog proof` reports malformed-line and unknown-event-shape counts from stored raw events when those counts are non-zero. This makes parser uncertainty visible without exposing raw local session content.
 
 Current ingest output includes:
 

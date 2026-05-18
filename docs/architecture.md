@@ -39,6 +39,7 @@ Raw events are the source of truth. Derived tables are disposable.
    - sessions correlated to repo by workspace, command cwd, and file-change overlap
    - risky path categories detected from changed paths
    - risky command families detected from relevant and ambiguous Codex sessions
+   - parser warning counts loaded from raw stored events
 7. Proof engine
    - verification detectors
    - conservative READY/NOT READY/UNKNOWN decision

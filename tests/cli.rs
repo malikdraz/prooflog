@@ -170,6 +170,83 @@ fn proof_json_format_is_machine_readable() {
 }
 
 #[test]
+fn proof_reports_parser_warning_counts_without_raw_events() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    git(&repo, ["add", "src/main.rs"]);
+    git(&repo, ["commit", "-m", "add code"]);
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    let repo_root = repo.canonicalize().unwrap();
+    fs::write(
+        codex_root.join("parser-warnings.jsonl"),
+        format!(
+            "{{\"type\":\"session_meta\",\"timestamp\":\"2026-05-18T16:20:00Z\",\"session_id\":\"session-parser-warnings\",\"workspace_path\":\"{}\",\"title\":\"Parser warnings\"}}\n\
+             {{\"type\":\"command\",\"timestamp\":\"2026-05-18T16:20:05Z\",\"session_id\":\"session-parser-warnings\",\"command\":{{\"cmd\":\"cargo test\",\"cwd\":\"{}\",\"status\":\"success\",\"exit_code\":0,\"output\":\"ok\"}}}}\n\
+             {{\"mystery\":true}}\n\
+             not json SECRET_PARSE_OUTPUT\n",
+            repo_root.display(),
+            repo_root.display()
+        ),
+    )
+    .unwrap();
+
+    env.command()
+        .args(["init", "--codex-root", codex_root.to_str().unwrap()])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    env.command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--db",
+            env.db_file().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Parser warnings:")
+                .and(predicate::str::contains("malformed lines: 1"))
+                .and(predicate::str::contains("unknown event shapes: 1"))
+                .and(predicate::str::contains("SECRET_PARSE_OUTPUT").not()),
+        );
+
+    let output = env
+        .command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--format",
+            "json",
+            "--db",
+            env.db_file().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("SECRET_PARSE_OUTPUT"));
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report["parser_warnings"]["malformed_lines"], 1);
+    assert_eq!(report["parser_warnings"]["unknown_event_shapes"], 1);
+}
+
+#[test]
 fn proof_markdown_format_is_snapshot_covered() {
     let env = CliEnv::new();
     let repo = init_git_repo(env.home.path().join("repo"));
