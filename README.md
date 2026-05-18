@@ -166,6 +166,7 @@ ProofLog is not:
 - [Documentation index](docs/README.md)
 - [Installation guide](docs/installation.md)
 - [Contributing guide](docs/contributing.md)
+- [Release checklist](docs/release-checklist.md)
 - [CLI behavior](docs/cli.md)
 - [Product requirements](docs/prd.md)
 - [Architecture notes](docs/architecture.md)
