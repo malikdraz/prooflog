@@ -9,7 +9,7 @@ The format follows Keep a Changelog conventions, and release versions follow sem
 - Keep this section for changes that have landed but are not yet released.
 - Move entries into the next versioned section before tagging.
 
-## [0.1.0] - 2026-05-19
+## [0.1.1] - 2026-05-19
 
 ### Added
 
