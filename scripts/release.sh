@@ -205,6 +205,10 @@ publish_tap() {
   [[ "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || die "tag must match vX.Y.Z: $tag"
   local version="${BASH_REMATCH[1]}"
   local repo="${PROOFLOG_TAP_REPO:-malikdraz/homebrew-tap}"
+  if [[ -z "${PROOFLOG_TAP_PATH:-}" && -z "${HOMEBREW_TAP_TOKEN:-}" ]]; then
+    die "HOMEBREW_TAP_TOKEN is required to update $repo"
+  fi
+
   local url="https://github.com/malikdraz/prooflog/archive/refs/tags/${tag}.tar.gz"
   local sha
   sha="$(curl -fsSL "$url" | shasum -a 256 | awk '{print $1}')"
@@ -214,7 +218,6 @@ publish_tap() {
   if [[ -n "${PROOFLOG_TAP_PATH:-}" ]]; then
     tap_dir="$PROOFLOG_TAP_PATH"
   else
-    [[ -n "${HOMEBREW_TAP_TOKEN:-}" ]] || die "HOMEBREW_TAP_TOKEN is required to update $repo"
     tap_dir="$(mktemp -d)"
     gh repo clone "$repo" "$tap_dir" -- --quiet
     git -C "$tap_dir" remote set-url origin "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${repo}.git"

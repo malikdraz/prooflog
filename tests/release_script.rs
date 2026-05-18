@@ -92,3 +92,16 @@ fn release_script_extracts_matching_changelog_section() {
     assert!(notes.contains("- Existing release."));
     assert!(!notes.contains("Unreleased"));
 }
+
+#[test]
+fn release_script_publish_tap_requires_token_without_local_tap_path() {
+    let root = fixture();
+
+    script_command(&root)
+        .args(["publish-tap", "v1.2.3"])
+        .env_remove("HOMEBREW_TAP_TOKEN")
+        .env_remove("PROOFLOG_TAP_PATH")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("HOMEBREW_TAP_TOKEN is required"));
+}
