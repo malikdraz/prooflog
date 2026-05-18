@@ -13,6 +13,7 @@ Create five redacted fixtures from real Codex JSONL.
 2. `02_fail_then_pass.jsonl`
    - command fails, later rerun passes
    - expected: original failure marked resolved
+   - status: present at `tests/fixtures/codex/02_fail_then_pass.jsonl`
 3. `03_unresolved_failure.jsonl`
    - failed test, lint, build, or typecheck with no later passing rerun
    - expected: NOT READY

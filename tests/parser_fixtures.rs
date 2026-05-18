@@ -13,6 +13,17 @@ fn fixture_01_single_success_has_expected_parser_contract() {
     assert_eq!(fixture.fail_proof_facts, 0);
 }
 
+#[test]
+fn fixture_02_fail_then_pass_resolves_failed_verification() {
+    let fixture = parse_fixture("tests/fixtures/codex/02_fail_then_pass.jsonl");
+
+    assert_eq!(fixture.sessions, 1);
+    assert_eq!(fixture.failed_verification_commands, 1);
+    assert_eq!(fixture.passing_verification_commands, 1);
+    assert_eq!(fixture.resolved_failures, 1);
+    assert_eq!(fixture.unresolved_failures, 0);
+}
+
 #[derive(Default)]
 struct FixtureSummary {
     sessions: usize,
@@ -21,6 +32,11 @@ struct FixtureSummary {
     commands: usize,
     pass_proof_facts: usize,
     fail_proof_facts: usize,
+    passing_verification_commands: usize,
+    failed_verification_commands: usize,
+    resolved_failures: usize,
+    unresolved_failures: usize,
+    open_failures: Vec<String>,
 }
 
 fn parse_fixture(path: impl AsRef<Path>) -> FixtureSummary {
@@ -61,19 +77,36 @@ fn apply_fixture_event(summary: &mut FixtureSummary, value: &Value) {
         },
         Some("command") => {
             summary.commands += 1;
-            if is_passing_verification_command(value) {
+            if !is_verification_command(value) {
+                return;
+            }
+
+            let subject = verification_subject(value);
+            if is_passing_command(value) {
+                summary.passing_verification_commands += 1;
                 summary.pass_proof_facts += 1;
+                if let Some(position) = summary
+                    .open_failures
+                    .iter()
+                    .position(|failure| failure == &subject)
+                {
+                    summary.open_failures.remove(position);
+                    summary.resolved_failures += 1;
+                }
             } else if is_failing_command(value) {
+                summary.failed_verification_commands += 1;
                 summary.fail_proof_facts += 1;
+                summary.open_failures.push(subject);
+                summary.unresolved_failures += 1;
             }
         }
         _ => {}
     }
+    summary.unresolved_failures = summary.open_failures.len();
 }
 
-fn is_passing_verification_command(value: &Value) -> bool {
-    is_verification_command(value)
-        && value.pointer("/command/exit_code").and_then(Value::as_i64) == Some(0)
+fn is_passing_command(value: &Value) -> bool {
+    value.pointer("/command/exit_code").and_then(Value::as_i64) == Some(0)
 }
 
 fn is_failing_command(value: &Value) -> bool {
@@ -92,4 +125,12 @@ fn is_verification_command(value: &Value) -> bool {
         command,
         "cargo test" | "cargo build" | "cargo clippy" | "go test ./..." | "npm test"
     )
+}
+
+fn verification_subject(value: &Value) -> String {
+    value
+        .pointer("/command/cmd")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string()
 }
