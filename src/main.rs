@@ -285,6 +285,7 @@ fn discover_and_record_codex_files(conn: &mut Connection, root: &Path) -> Result
     derive_sessions(&tx)?;
     derive_messages(&tx)?;
     derive_commands(&tx)?;
+    derive_approvals(&tx)?;
     rebuild_raw_events_fts(&tx)?;
     rebuild_messages_fts(&tx)?;
     rebuild_command_output_fts(&tx)?;
@@ -888,6 +889,93 @@ fn extract_command(value: &Value, event_time: Option<&str>) -> Option<DerivedCom
         output: string_field(command, &["output"]),
         started_at,
         ended_at,
+    })
+}
+
+fn derive_approvals(conn: &Connection) -> Result<()> {
+    conn.execute("DELETE FROM approvals", [])
+        .context("failed to refresh derived approvals")?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, session_id, raw_json, event_time
+             FROM raw_events
+             WHERE parse_error IS NULL
+             ORDER BY codex_file_id, line_number",
+        )
+        .context("failed to derive approvals from raw events")?;
+    let mut rows = stmt
+        .query([])
+        .context("failed to derive approvals from raw events")?;
+
+    while let Some(row) = rows
+        .next()
+        .context("failed to derive approvals from raw events")?
+    {
+        let raw_event_id: i64 = row
+            .get(0)
+            .context("failed to derive approvals from raw events")?;
+        let session_id: Option<i64> = row
+            .get(1)
+            .context("failed to derive approvals from raw events")?;
+        let raw_json: String = row
+            .get(2)
+            .context("failed to derive approvals from raw events")?;
+        let created_at: Option<String> = row
+            .get(3)
+            .context("failed to derive approvals from raw events")?;
+        let value: Value = serde_json::from_str(&raw_json)
+            .context("failed to derive approvals from raw events")?;
+        let Some(approval) = extract_approval(&value) else {
+            continue;
+        };
+
+        conn.execute(
+            "INSERT INTO approvals (
+                raw_event_id,
+                session_id,
+                action,
+                decision,
+                sandbox_mode,
+                command,
+                created_at
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (
+                raw_event_id,
+                session_id,
+                approval.action.as_deref(),
+                approval.decision.as_deref(),
+                approval.sandbox_mode.as_deref(),
+                approval.command.as_deref(),
+                created_at.as_deref(),
+            ),
+        )
+        .context("failed to record derived approval")?;
+    }
+
+    Ok(())
+}
+
+#[derive(Debug)]
+struct DerivedApproval {
+    action: Option<String>,
+    decision: Option<String>,
+    sandbox_mode: Option<String>,
+    command: Option<String>,
+}
+
+fn extract_approval(value: &Value) -> Option<DerivedApproval> {
+    if value.get("type").and_then(Value::as_str) != Some("approval") {
+        return None;
+    }
+
+    let approval = value.get("approval")?;
+    Some(DerivedApproval {
+        action: string_field(approval, &["requested_action", "action"]),
+        decision: string_field(approval, &["decision"]),
+        sandbox_mode: string_field(approval, &["sandbox_mode"]),
+        command: string_field(approval, &["command"]),
     })
 }
 

@@ -1048,6 +1048,114 @@ fn ingest_populates_command_output_fts_index() {
 }
 
 #[test]
+fn ingest_derives_approvals_from_raw_events() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("04_approval_risk.jsonl"),
+        include_str!("fixtures/codex/04_approval_risk.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let approvals = approval_rows(env.db_file());
+    assert_eq!(approvals.len(), 1);
+    assert!(approvals[0].raw_event_id > 0);
+    assert!(approvals[0].session_id.is_some());
+    assert_eq!(approvals[0].action.as_deref(), Some("run_command"));
+    assert_eq!(approvals[0].decision.as_deref(), Some("approved"));
+    assert_eq!(
+        approvals[0].sandbox_mode.as_deref(),
+        Some("network-restricted")
+    );
+    assert_eq!(
+        approvals[0].command.as_deref(),
+        Some("gh pr checks --repo example-org/example-repo")
+    );
+    assert_eq!(
+        approvals[0].created_at.as_deref(),
+        Some("2026-05-18T13:00:30Z")
+    );
+}
+
+#[test]
+fn approval_derivation_allows_missing_optional_fields() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("approvals.jsonl"),
+        concat!(
+            "{\"type\":\"approval\",\"timestamp\":\"2026-05-18T13:00:30Z\",\"approval\":{}}\n",
+            "{\"type\":\"approval\",\"timestamp\":\"2026-05-18T13:00:40Z\"}\n",
+            "not json\n"
+        ),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let approvals = approval_rows(env.db_file());
+    assert_eq!(approvals.len(), 1);
+    assert!(approvals[0].session_id.is_none());
+    assert!(approvals[0].action.is_none());
+    assert!(approvals[0].decision.is_none());
+    assert!(approvals[0].sandbox_mode.is_none());
+    assert!(approvals[0].command.is_none());
+    assert_eq!(
+        approvals[0].created_at.as_deref(),
+        Some("2026-05-18T13:00:30Z")
+    );
+}
+
+#[test]
+fn repeated_ingest_does_not_duplicate_approvals() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("04_approval_risk.jsonl"),
+        include_str!("fixtures/codex/04_approval_risk.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    for _ in 0..2 {
+        env.command()
+            .args([
+                "ingest",
+                "--codex",
+                "--codex-root",
+                codex_root.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+    }
+
+    assert_eq!(approval_rows(env.db_file()).len(), 1);
+}
+
+#[test]
 fn doctor_reports_missing_raw_event_fts_table() {
     let env = CliEnv::new();
     env.command().arg("init").assert().success();
@@ -1287,6 +1395,16 @@ struct CommandRow {
     ended_at: Option<String>,
 }
 
+struct ApprovalRow {
+    raw_event_id: i64,
+    session_id: Option<i64>,
+    action: Option<String>,
+    decision: Option<String>,
+    sandbox_mode: Option<String>,
+    command: Option<String>,
+    created_at: Option<String>,
+}
+
 fn codex_file_rows(db_path: impl AsRef<std::path::Path>) -> Vec<CodexFileRow> {
     let conn = Connection::open(db_path).unwrap();
     let mut stmt = conn
@@ -1399,6 +1517,31 @@ fn command_rows(db_path: impl AsRef<std::path::Path>) -> Vec<CommandRow> {
             output: row.get(6)?,
             started_at: row.get(7)?,
             ended_at: row.get(8)?,
+        })
+    })
+    .unwrap()
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()
+}
+
+fn approval_rows(db_path: impl AsRef<std::path::Path>) -> Vec<ApprovalRow> {
+    let conn = Connection::open(db_path).unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT raw_event_id, session_id, action, decision, sandbox_mode, command, created_at
+             FROM approvals
+             ORDER BY raw_event_id",
+        )
+        .unwrap();
+    stmt.query_map([], |row| {
+        Ok(ApprovalRow {
+            raw_event_id: row.get(0)?,
+            session_id: row.get(1)?,
+            action: row.get(2)?,
+            decision: row.get(3)?,
+            sandbox_mode: row.get(4)?,
+            command: row.get(5)?,
+            created_at: row.get(6)?,
         })
     })
     .unwrap()
