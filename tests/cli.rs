@@ -527,6 +527,102 @@ fn ingest_migrates_existing_v1_database_before_storing_duplicate_lines() {
 }
 
 #[test]
+fn ingest_populates_raw_event_fts_index() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("session.jsonl"),
+        "{\"type\":\"message\",\"body\":\"needle_token\"}\nnot json\n",
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(raw_event_fts_match_count(env.db_file(), "needle_token"), 1);
+    assert_eq!(raw_event_fts_match_count(env.db_file(), "expected"), 1);
+}
+
+#[test]
+fn repeated_ingest_keeps_raw_event_fts_matches_stable() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(codex_root.join("session.jsonl"), "{\"body\":\"stable\"}\n").unwrap();
+
+    env.command().arg("init").assert().success();
+    for _ in 0..2 {
+        env.command()
+            .args([
+                "ingest",
+                "--codex",
+                "--codex-root",
+                codex_root.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+    }
+
+    assert_eq!(raw_event_fts_match_count(env.db_file(), "stable"), 1);
+}
+
+#[test]
+fn changed_jsonl_line_refreshes_raw_event_fts_index() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    let file = codex_root.join("session.jsonl");
+    fs::write(&file, "{\"body\":\"before_token\"}\n").unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    fs::write(&file, "{\"body\":\"after_token\"}\n").unwrap();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(raw_event_fts_match_count(env.db_file(), "before_token"), 0);
+    assert_eq!(raw_event_fts_match_count(env.db_file(), "after_token"), 1);
+}
+
+#[test]
+fn doctor_reports_missing_raw_event_fts_table() {
+    let env = CliEnv::new();
+    env.command().arg("init").assert().success();
+    let conn = Connection::open(env.db_file()).unwrap();
+    conn.execute("DROP TABLE raw_events_fts", []).unwrap();
+
+    env.command().arg("doctor").assert().failure().stderr(
+        predicate::str::contains("failed to inspect database")
+            .and(predicate::str::contains("raw_events_fts")),
+    );
+}
+
+#[test]
 fn changed_jsonl_line_updates_existing_raw_event_row() {
     let env = CliEnv::new();
     let codex_root = env.home.path().join("codex-history");
@@ -759,6 +855,16 @@ fn raw_event_rows(db_path: impl AsRef<std::path::Path>) -> Vec<RawEventRow> {
     })
     .unwrap()
     .collect::<Result<Vec<_>, _>>()
+    .unwrap()
+}
+
+fn raw_event_fts_match_count(db_path: impl AsRef<std::path::Path>, query: &str) -> i64 {
+    let conn = Connection::open(db_path).unwrap();
+    conn.query_row(
+        "SELECT COUNT(*) FROM raw_events_fts WHERE raw_events_fts MATCH ?1",
+        [query],
+        |row| row.get(0),
+    )
     .unwrap()
 }
 

@@ -25,7 +25,7 @@ The current config stores:
 - Codex root
 - redaction defaults
 
-`prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, and stores non-empty raw JSONL lines in SQLite.
+`prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, and rebuilds the raw event FTS index.
 
 `prooflog proof --since main` is still an explicit placeholder. It does not inspect git state or produce proof reports yet.
 
@@ -122,7 +122,7 @@ Each raw event row records:
 
 Malformed JSON lines do not abort ingest. Unknown valid JSON shapes are preserved with NULL derived metadata. Empty lines are skipped and counted in ingest output.
 
-Current ingest output includes file discovery counts, raw event stored/skipped counts, malformed-line count, and grouped warnings. Raw event FTS indexing and derived parser extraction are planned follow-up work.
+Current ingest output includes file discovery counts, raw event stored/skipped counts, malformed-line count, and grouped warnings. After ingest, `raw_events_fts` is rebuilt from stored raw events for internal diagnostics. This is not a user-facing search command, and derived parser extraction remains planned follow-up work.
 
 ## Permission Warnings
 
@@ -136,6 +136,7 @@ If `prooflog doctor` finds broader permissions, it prints a warning with a `chmo
 
 - config path and resolved config values
 - SQLite open status, migration version, FTS5 availability, and journal mode
+- required FTS table availability
 - Codex root state and recursive `.jsonl` file count
 - current git repo root and branch when available
 - warnings for missing Codex root, no JSONL files, missing git repo, and unsafe file permissions

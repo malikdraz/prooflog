@@ -23,6 +23,7 @@ Raw events are the source of truth. Derived tables are disposable.
    - stores every non-empty line
    - records malformed lines
    - preserves unknown event shapes
+   - rebuilds raw event FTS for diagnostics
 5. Derived extraction
    - sessions
    - messages
@@ -69,4 +70,4 @@ The current MVP schema also initializes these FTS5 tables:
 - `messages_fts`
 - `command_output_fts`
 
-The FTS tables are initialized but not populated by ingest yet.
+`raw_events_fts` is rebuilt after raw ingest. Message and command-output FTS tables are initialized for later derived extraction.

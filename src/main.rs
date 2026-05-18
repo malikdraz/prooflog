@@ -276,6 +276,7 @@ fn discover_and_record_codex_files(conn: &mut Connection, root: &Path) -> Result
         }
         record_raw_events(&tx, recorded_file.id, &file.path, &mut summary)?;
     }
+    rebuild_raw_events_fts(&tx)?;
     tx.commit()
         .context("failed to record discovered Codex files")?;
 
@@ -538,6 +539,15 @@ fn upsert_raw_event(conn: &Connection, codex_file_id: i64, event: &RawEventLine)
     Ok(true)
 }
 
+fn rebuild_raw_events_fts(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "INSERT INTO raw_events_fts(raw_events_fts) VALUES ('rebuild')",
+        [],
+    )
+    .context("failed to rebuild raw event FTS index")?;
+    Ok(())
+}
+
 fn sha256_hex(text: &str) -> String {
     hex_digest(Sha256::digest(text.as_bytes()).as_slice())
 }
@@ -792,12 +802,25 @@ fn storage_status(conn: &Connection, db_path: &Path) -> Result<StorageStatus> {
             source,
         })
         .with_context(|| format!("failed to inspect database {}", db_path.display()))?;
+    for table in ["raw_events_fts", "messages_fts", "command_output_fts"] {
+        check_required_fts_table(conn, db_path, table)?;
+    }
 
     Ok(StorageStatus {
         db_path: db_path.to_path_buf(),
         migration_version,
         journal_mode,
     })
+}
+
+fn check_required_fts_table(conn: &Connection, db_path: &Path, table: &str) -> Result<()> {
+    conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |_| Ok(()))
+        .map_err(|source| StorageError::InspectDb {
+            path: db_path.to_path_buf(),
+            source,
+        })
+        .with_context(|| format!("failed to inspect database {}", db_path.display()))?;
+    Ok(())
 }
 
 const SCHEMA_V1: &str = r#"
