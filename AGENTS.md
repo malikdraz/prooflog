@@ -2,11 +2,12 @@
 
 ## Scope
 
-This repo is the ProofLog project. The current repository state is documentation-only. Do not start implementation unless the user explicitly asks for implementation work.
+This repo is the ProofLog project. Implementation has started with a Rust CLI skeleton. Continue implementation only when the user asks for project work or a tracked task requires it.
 
 ## Project Context
 
 - Core command: `prooflog proof --since main`
+- Current binary commands: `init`, `doctor`, `ingest`, `proof`
 - Local docs under `docs/` define the public project direction.
 
 Use the repo-local docs as the source of truth for public project direction unless the user gives newer requirements.
@@ -48,12 +49,13 @@ Out of scope before the adoption test:
 
 ## Documentation Workflow
 
-For documentation-only tasks:
+For documentation tasks:
 
 - Keep product requirements in `docs/prd.md`.
 - Keep architectural decisions in `docs/architecture.md`.
 - Keep milestone and issue sequencing in `docs/roadmap.md`.
 - Keep risk handling in `docs/risks.md`.
+- Keep user-facing CLI behavior in `docs/cli.md`.
 
 ## Done Criteria
 

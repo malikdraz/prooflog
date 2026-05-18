@@ -65,11 +65,22 @@ Within 7 days of first usable release:
 
 ## Current Status
 
-This repository is currently documentation-only. Implementation has not started yet.
+ProofLog currently has an initial Rust CLI skeleton. The binary builds and exposes the planned MVP command surface:
+
+```bash
+prooflog --help
+prooflog init
+prooflog doctor
+prooflog ingest --codex
+prooflog proof --since main
+```
+
+The command handlers are placeholders while config, SQLite storage, ingestion, git correlation, proof reports, and exit-code behavior are implemented.
 
 Start here:
 
 - [Documentation index](docs/README.md)
+- [CLI behavior](docs/cli.md)
 - [Product requirements](docs/prd.md)
 - [Architecture notes](docs/architecture.md)
 - [Roadmap](docs/roadmap.md)
