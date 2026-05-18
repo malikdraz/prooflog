@@ -63,6 +63,95 @@ fn proof_prints_plain_text_report_sections() {
 }
 
 #[test]
+fn proof_accepts_explicit_text_format() {
+    let mut proof = Command::cargo_bin("prooflog").unwrap();
+    proof
+        .args(["proof", "--since", "main", "--format", "text"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("PROOFLOG REPORT")
+                .and(predicate::str::contains("Scope:"))
+                .and(predicate::str::contains("# ProofLog Report").not()),
+        );
+}
+
+#[test]
+fn proof_rejects_unknown_format() {
+    let mut proof = Command::cargo_bin("prooflog").unwrap();
+    proof
+        .args(["proof", "--since", "main", "--format", "xml"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("invalid value")
+                .and(predicate::str::contains("xml"))
+                .and(predicate::str::contains("text"))
+                .and(predicate::str::contains("md")),
+        );
+}
+
+#[test]
+fn proof_markdown_format_is_snapshot_covered() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("src").join("auth")).unwrap();
+    fs::write(
+        repo.join("src").join("auth").join("session.rs"),
+        "pub fn auth() {}\n",
+    )
+    .unwrap();
+    git(&repo, ["add", "src/auth/session.rs"]);
+    git(&repo, ["commit", "-m", "add auth"]);
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    let repo_root = repo.canonicalize().unwrap();
+    fs::write(
+        codex_root.join("markdown-ready.jsonl"),
+        format!(
+            "{{\"type\":\"session_meta\",\"timestamp\":\"2026-05-18T16:00:00Z\",\"session_id\":\"session-md\",\"workspace_path\":\"{}\",\"title\":\"Markdown proof\"}}\n\
+             {{\"type\":\"command\",\"timestamp\":\"2026-05-18T16:00:05Z\",\"session_id\":\"session-md\",\"command\":{{\"cmd\":\"cargo test\",\"cwd\":\"{}\",\"status\":\"success\",\"exit_code\":0,\"output\":\"SECRET_MARKDOWN_OUTPUT should not print\"}}}}\n",
+            repo_root.display(),
+            repo_root.display()
+        ),
+    )
+    .unwrap();
+
+    env.command()
+        .args(["init", "--codex-root", codex_root.to_str().unwrap()])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let output = env
+        .command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--format",
+            "md",
+            "--db",
+            env.db_file().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("SECRET_MARKDOWN_OUTPUT"));
+    insta::assert_snapshot!(normalize_report_output(&stdout, &repo));
+}
+
+#[test]
 fn proof_reports_git_context_for_repo_override() {
     let env = CliEnv::new();
     let repo = init_git_repo(env.home.path().join("repo"));
@@ -3117,6 +3206,25 @@ fn proof_fact_rows(db_path: impl AsRef<std::path::Path>) -> Vec<ProofFactRow> {
     .unwrap()
     .collect::<Result<Vec<_>, _>>()
     .unwrap()
+}
+
+fn normalize_report_output(output: &str, repo: impl AsRef<std::path::Path>) -> String {
+    let repo = repo.as_ref().canonicalize().unwrap();
+    let repo_display = repo.display().to_string();
+    output
+        .lines()
+        .map(|line| {
+            let line = line.replace(&repo_display, "/repo");
+            if line.starts_with("| head |") {
+                "| head | <head> |".to_string()
+            } else if line.starts_with("| merge base |") {
+                "| merge base | <merge-base> |".to_string()
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn linked_raw_event_count(db_path: impl AsRef<std::path::Path>, session_id: i64) -> i64 {

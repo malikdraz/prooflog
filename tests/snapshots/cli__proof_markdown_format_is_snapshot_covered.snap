@@ -1,0 +1,87 @@
+---
+source: tests/cli.rs
+assertion_line: 151
+expression: "normalize_report_output(&stdout, &repo)"
+---
+# ProofLog Report
+
+## Scope
+
+| Field | Value |
+| --- | --- |
+| repo | /repo |
+| branch | main |
+| since | main~1 |
+| head | <head> |
+| merge base | <merge-base> |
+| dirty | no |
+
+## Changed
+
+- files: 1
+- additions: 1
+- deletions: 0
+- docs only: no
+
+| Status | Path | Additions | Deletions |
+| --- | --- | ---: | ---: |
+| A | src/auth/session.rs | 1 | 0 |
+
+## Codex Evidence
+
+- relevant sessions: 1
+- ambiguous sessions: 0
+
+| Type | Session | Title | Signals |
+| --- | --- | --- | --- |
+| relevant | session-md | Markdown proof | workspace, command-cwd |
+
+## Verification
+
+- facts: 1
+- passed: 1
+- failed: 0
+- unknown: 0
+
+| Status | Session | Subject |
+| --- | --- | --- |
+| passed | session-md | cargo test |
+
+## Failures
+
+- failure resolutions: 0
+- unresolved: 0
+- resolved: 0
+- ambiguous: 0
+
+No relevant failure-resolution facts.
+
+## Risks
+
+### Changed Paths
+
+- risk level: elevated
+- risky files: 1
+
+| Category | Path | Reason |
+| --- | --- | --- |
+| auth | src/auth/session.rs | authentication path |
+
+### Risky Commands
+
+- relevant: 0
+- ambiguous: 0
+
+No risky commands in correlated sessions.
+
+## Decision
+
+**Status:** READY
+
+## Why
+
+- relevant verification passed: session-md cargo test
+
+## Next
+
+- review and paste the report where proof is needed

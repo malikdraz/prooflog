@@ -10,7 +10,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -142,7 +142,7 @@ fn proof_git_context(args: ProofArgs) -> Result<()> {
     let risky_commands = classify_risky_commands(&db_path, &correlation)?;
     let decision = decide_proof(&db_path, &changed, &correlation)?;
     let report_facts = load_proof_report_facts(&db_path, &correlation)?;
-    print_plain_text_report(PlainTextReport {
+    let report = ProofReport {
         since: &since,
         git: &git,
         changed: &changed,
@@ -151,7 +151,11 @@ fn proof_git_context(args: ProofArgs) -> Result<()> {
         correlation: &correlation,
         facts: &report_facts,
         decision: &decision,
-    });
+    };
+    match args.format {
+        ProofFormat::Text => print_plain_text_report(report),
+        ProofFormat::Md => print_markdown_report(report),
+    }
     Ok(())
 }
 
@@ -166,7 +170,13 @@ fn resolve_proof_db_path(db_path: Option<PathBuf>) -> Result<PathBuf> {
         .unwrap_or(paths.db_file))
 }
 
-struct PlainTextReport<'a> {
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ProofFormat {
+    Text,
+    Md,
+}
+
+struct ProofReport<'a> {
     since: &'a str,
     git: &'a ProofGitContext,
     changed: &'a ChangedFiles,
@@ -177,7 +187,7 @@ struct PlainTextReport<'a> {
     decision: &'a ProofDecision,
 }
 
-fn print_plain_text_report(report: PlainTextReport<'_>) {
+fn print_plain_text_report(report: ProofReport<'_>) {
     println!("PROOFLOG REPORT");
     print_report_scope(report.since, report.git);
     print_changed_files(report.changed);
@@ -190,6 +200,262 @@ fn print_plain_text_report(report: PlainTextReport<'_>) {
     print_proof_decision(report.decision);
     print_why(report.decision);
     print_next(report.decision);
+}
+
+fn print_markdown_report(report: ProofReport<'_>) {
+    println!("# ProofLog Report");
+    println!();
+    println!("## Scope");
+    println!();
+    println!("| Field | Value |");
+    println!("| --- | --- |");
+    println!("| repo | {} |", md_cell(report.git.repo_root.display()));
+    println!("| branch | {} |", md_cell(&report.git.branch));
+    println!("| since | {} |", md_cell(report.since));
+    println!("| head | {} |", report.git.head);
+    println!("| merge base | {} |", report.git.merge_base);
+    println!(
+        "| dirty | {} |",
+        if report.git.dirty { "yes" } else { "no" }
+    );
+    println!();
+
+    println!("## Changed");
+    println!();
+    println!("- files: {}", report.changed.files.len());
+    println!("- additions: {}", report.changed.total_additions);
+    println!("- deletions: {}", report.changed.total_deletions);
+    println!(
+        "- docs only: {}",
+        if report.changed.docs_only {
+            "yes"
+        } else {
+            "no"
+        }
+    );
+    println!();
+    if report.changed.files.is_empty() {
+        println!("No changed files.");
+    } else {
+        println!("| Status | Path | Additions | Deletions |");
+        println!("| --- | --- | ---: | ---: |");
+        for file in &report.changed.files {
+            println!(
+                "| {} | {} | {} | {} |",
+                md_cell(&file.status),
+                md_cell(file.display_path()),
+                display_stat(file.additions),
+                display_stat(file.deletions)
+            );
+        }
+    }
+    println!();
+
+    println!("## Codex Evidence");
+    println!();
+    println!("- relevant sessions: {}", report.correlation.relevant.len());
+    println!(
+        "- ambiguous sessions: {}",
+        report.correlation.ambiguous.len()
+    );
+    println!();
+    if report.correlation.relevant.is_empty() && report.correlation.ambiguous.is_empty() {
+        println!("No correlated Codex sessions.");
+    } else {
+        println!("| Type | Session | Title | Signals |");
+        println!("| --- | --- | --- | --- |");
+        for session in &report.correlation.relevant {
+            print_markdown_session("relevant", session);
+        }
+        for session in &report.correlation.ambiguous {
+            print_markdown_session("ambiguous", session);
+        }
+    }
+    println!();
+
+    print_markdown_verification(report.facts);
+    print_markdown_failures(report.facts);
+    print_markdown_risks(report.risk, report.risky_commands);
+
+    println!("## Decision");
+    println!();
+    println!("**Status:** {}", report.decision.status);
+    println!();
+    println!("## Why");
+    println!();
+    for reason in &report.decision.reasons {
+        println!("- {}", md_cell(reason));
+    }
+    println!();
+    println!("## Next");
+    println!();
+    println!("- {}", next_step(report.decision));
+}
+
+fn print_markdown_session(kind: &str, session: &CorrelatedSession) {
+    println!(
+        "| {} | {} | {} | {} |",
+        kind,
+        md_cell(&session.codex_session_id),
+        md_cell(session.title.as_deref().unwrap_or("(untitled)")),
+        md_cell(session.signals.join(", "))
+    );
+}
+
+fn print_markdown_verification(facts: &[DecisionFact]) {
+    println!("## Verification");
+    println!();
+    let verification_facts = facts
+        .iter()
+        .filter(|fact| fact.kind == "verification")
+        .collect::<Vec<_>>();
+    println!("- facts: {}", verification_facts.len());
+    println!(
+        "- passed: {}",
+        verification_facts
+            .iter()
+            .filter(|fact| fact.status == "passed")
+            .count()
+    );
+    println!(
+        "- failed: {}",
+        verification_facts
+            .iter()
+            .filter(|fact| fact.status == "failed")
+            .count()
+    );
+    println!(
+        "- unknown: {}",
+        verification_facts
+            .iter()
+            .filter(|fact| fact.status == "unknown")
+            .count()
+    );
+    println!();
+    if verification_facts.is_empty() {
+        println!("No relevant verification facts.");
+    } else {
+        println!("| Status | Session | Subject |");
+        println!("| --- | --- | --- |");
+        for fact in verification_facts {
+            println!(
+                "| {} | {} | {} |",
+                md_cell(&fact.status),
+                md_cell(&fact.codex_session_id),
+                md_cell(fact.subject.as_deref().unwrap_or("(unknown verification)"))
+            );
+        }
+    }
+    println!();
+}
+
+fn print_markdown_failures(facts: &[DecisionFact]) {
+    println!("## Failures");
+    println!();
+    let failure_facts = facts
+        .iter()
+        .filter(|fact| fact.kind == "failure_resolution")
+        .collect::<Vec<_>>();
+    println!("- failure resolutions: {}", failure_facts.len());
+    println!(
+        "- unresolved: {}",
+        failure_facts
+            .iter()
+            .filter(|fact| fact.status == "unresolved")
+            .count()
+    );
+    println!(
+        "- resolved: {}",
+        failure_facts
+            .iter()
+            .filter(|fact| fact.status == "resolved")
+            .count()
+    );
+    println!(
+        "- ambiguous: {}",
+        failure_facts
+            .iter()
+            .filter(|fact| fact.status == "unknown")
+            .count()
+    );
+    println!();
+    if failure_facts.is_empty() {
+        println!("No relevant failure-resolution facts.");
+    } else {
+        println!("| Status | Session | Subject |");
+        println!("| --- | --- | --- |");
+        for fact in failure_facts {
+            println!(
+                "| {} | {} | {} |",
+                md_cell(&fact.status),
+                md_cell(&fact.codex_session_id),
+                md_cell(fact.subject.as_deref().unwrap_or("(unknown verification)"))
+            );
+        }
+    }
+    println!();
+}
+
+fn print_markdown_risks(risk: &RiskReport, risky_commands: &RiskyCommandReport) {
+    println!("## Risks");
+    println!();
+    println!("### Changed Paths");
+    println!();
+    println!("- risk level: {}", risk.level);
+    println!("- risky files: {}", risk.risky_file_count);
+    println!();
+    if risk.findings.is_empty() {
+        println!("No risky changed paths.");
+    } else {
+        println!("| Category | Path | Reason |");
+        println!("| --- | --- | --- |");
+        for finding in &risk.findings {
+            println!(
+                "| {} | {} | {} |",
+                md_cell(finding.category),
+                md_cell(&finding.path),
+                md_cell(finding.reason)
+            );
+        }
+    }
+    println!();
+    println!("### Risky Commands");
+    println!();
+    println!("- relevant: {}", risky_commands.relevant.len());
+    println!("- ambiguous: {}", risky_commands.ambiguous.len());
+    println!();
+    if risky_commands.relevant.is_empty() && risky_commands.ambiguous.is_empty() {
+        println!("No risky commands in correlated sessions.");
+    } else {
+        println!("| Scope | Severity | Family | Session | Command | Reason |");
+        println!("| --- | --- | --- | --- | --- | --- |");
+        for finding in &risky_commands.relevant {
+            print_markdown_risky_command("relevant", finding);
+        }
+        for finding in &risky_commands.ambiguous {
+            print_markdown_risky_command("ambiguous", finding);
+        }
+    }
+    println!();
+}
+
+fn print_markdown_risky_command(scope: &str, finding: &RiskyCommandFinding) {
+    println!(
+        "| {} | {} | {} | {} | {} | {} |",
+        scope,
+        md_cell(finding.severity),
+        md_cell(finding.family),
+        md_cell(&finding.codex_session_id),
+        md_cell(&finding.command),
+        md_cell(finding.reason)
+    );
+}
+
+fn md_cell(value: impl std::fmt::Display) -> String {
+    value
+        .to_string()
+        .replace('|', "\\|")
+        .replace(['\n', '\r'], " ")
 }
 
 fn print_report_scope(since: &str, git: &ProofGitContext) {
@@ -382,12 +648,15 @@ fn print_why(decision: &ProofDecision) {
 
 fn print_next(decision: &ProofDecision) {
     println!("Next:");
-    let next = match decision.status {
+    println!("  {}", next_step(decision));
+}
+
+fn next_step(decision: &ProofDecision) -> &'static str {
+    match decision.status {
         "READY" => "review and paste the report where proof is needed",
         "NOT READY" => "resolve the listed verification failures and rerun proof",
         _ => "ingest local Codex history or run verification, then rerun proof",
-    };
-    println!("  {next}");
+    }
 }
 
 fn print_config_status(heading: &str, config_file: &Path, config: &ProoflogConfig) {
@@ -3540,6 +3809,10 @@ struct ProofArgs {
     /// Override the local ProofLog database path.
     #[arg(long, value_name = "PATH")]
     db: Option<PathBuf>,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = ProofFormat::Text)]
+    format: ProofFormat,
 
     /// Override the Codex history root.
     #[arg(long, value_name = "PATH")]

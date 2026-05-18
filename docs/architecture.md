@@ -44,7 +44,7 @@ Raw events are the source of truth. Derived tables are disposable.
    - conservative READY/NOT READY/UNKNOWN decision
 8. Report renderer
    - plain text report
-   - Markdown report planned
+   - Markdown report
    - deterministic output
    - useful exit codes planned
 
