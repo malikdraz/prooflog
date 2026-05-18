@@ -150,6 +150,8 @@ fn proof_git_context(args: ProofArgs) -> Result<()> {
     let risky_commands = classify_risky_commands(&db_path, &correlation)?;
     print_risky_commands(&risky_commands);
     print_session_correlation(&correlation);
+    let decision = decide_proof(&db_path, &changed, &correlation)?;
+    print_proof_decision(&decision);
     println!("Proof:");
     println!("  since: {since}");
     println!("  proof report: not implemented yet");
@@ -246,6 +248,14 @@ fn print_session_correlation(correlation: &SessionCorrelation) {
             session.title.as_deref().unwrap_or("(untitled)"),
             session.signals.join(", ")
         );
+    }
+}
+
+fn print_proof_decision(decision: &ProofDecision) {
+    println!("Decision:");
+    println!("  status: {}", decision.status);
+    for reason in &decision.reasons {
+        println!("  reason: {reason}");
     }
 }
 
@@ -394,6 +404,22 @@ struct RiskyCommandFinding {
     severity: &'static str,
     reason: &'static str,
     command: String,
+}
+
+#[derive(Debug)]
+struct ProofDecision {
+    status: &'static str,
+    reasons: Vec<String>,
+}
+
+#[derive(Debug)]
+struct DecisionFact {
+    session_id: i64,
+    codex_session_id: String,
+    command_id: Option<i64>,
+    kind: String,
+    subject: Option<String>,
+    status: String,
 }
 
 #[derive(Debug, Default)]
@@ -2164,6 +2190,210 @@ fn path_contains_any(path: &str, needles: &[&str]) -> bool {
 
 fn normalized_path(path: &str) -> String {
     path.replace('\\', "/").to_ascii_lowercase()
+}
+
+fn decide_proof(
+    db_path: &Path,
+    changed: &ChangedFiles,
+    correlation: &SessionCorrelation,
+) -> Result<ProofDecision> {
+    if changed.files.is_empty() {
+        return Ok(unknown_decision("no changed files for selected git scope"));
+    }
+    if !db_path.exists() {
+        return Ok(unknown_decision("local proof database is missing"));
+    }
+
+    let conn = open_existing_database(db_path)?;
+    let relevant_sessions = correlated_sessions_by_id(&correlation.relevant);
+    let ambiguous_sessions = correlated_sessions_by_id(&correlation.ambiguous);
+
+    if relevant_sessions.is_empty() {
+        let ambiguous_facts = load_decision_facts(&conn, &ambiguous_sessions)?;
+        if ambiguous_facts.iter().any(is_decision_evidence) {
+            return Ok(unknown_decision(
+                "only ambiguous verification evidence found",
+            ));
+        }
+        return Ok(unknown_decision("no relevant Codex sessions"));
+    }
+
+    let facts = load_decision_facts(&conn, &relevant_sessions)?;
+    let verification_facts = facts
+        .iter()
+        .filter(|fact| fact.kind == "verification")
+        .collect::<Vec<_>>();
+    if verification_facts.is_empty() {
+        return Ok(unknown_decision("no relevant verification evidence"));
+    }
+
+    let resolution_by_command = facts
+        .iter()
+        .filter(|fact| fact.kind == "failure_resolution")
+        .filter_map(|fact| fact.command_id.map(|command_id| (command_id, fact)))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut not_ready_reasons = Vec::new();
+    for fact in facts
+        .iter()
+        .filter(|fact| fact.kind == "failure_resolution" && fact.status == "unresolved")
+    {
+        not_ready_reasons.push(format!(
+            "unresolved verification failure: {} {}",
+            fact.codex_session_id,
+            fact.subject.as_deref().unwrap_or("(unknown verification)")
+        ));
+    }
+    for fact in verification_facts
+        .iter()
+        .filter(|fact| fact.status == "failed")
+    {
+        let resolved = fact
+            .command_id
+            .and_then(|command_id| resolution_by_command.get(&command_id))
+            .is_some_and(|resolution| resolution.status == "resolved");
+        if !resolved {
+            not_ready_reasons.push(format!(
+                "unresolved verification failure: {} {}",
+                fact.codex_session_id,
+                fact.subject.as_deref().unwrap_or("(unknown verification)")
+            ));
+        }
+    }
+    sort_dedup(&mut not_ready_reasons);
+    if !not_ready_reasons.is_empty() {
+        return Ok(ProofDecision {
+            status: "NOT READY",
+            reasons: not_ready_reasons,
+        });
+    }
+
+    let mut unknown_reasons = Vec::new();
+    for fact in facts
+        .iter()
+        .filter(|fact| fact.kind == "failure_resolution" && fact.status == "unknown")
+    {
+        unknown_reasons.push(format!(
+            "ambiguous failure resolution: {} {}",
+            fact.codex_session_id,
+            fact.subject.as_deref().unwrap_or("(unknown verification)")
+        ));
+    }
+    if verification_facts
+        .iter()
+        .all(|fact| fact.status == "unknown")
+    {
+        unknown_reasons.push("only unknown verification evidence".to_string());
+    } else if !verification_facts
+        .iter()
+        .any(|fact| fact.status == "passed")
+    {
+        unknown_reasons.push("no passing verification evidence".to_string());
+    }
+    sort_dedup(&mut unknown_reasons);
+    if !unknown_reasons.is_empty() {
+        return Ok(ProofDecision {
+            status: "UNKNOWN",
+            reasons: unknown_reasons,
+        });
+    }
+
+    let mut ready_reasons = facts
+        .iter()
+        .filter(|fact| fact.kind == "failure_resolution" && fact.status == "resolved")
+        .map(|fact| {
+            format!(
+                "resolved verification failure: {} {}",
+                fact.codex_session_id,
+                fact.subject.as_deref().unwrap_or("(unknown verification)")
+            )
+        })
+        .collect::<Vec<_>>();
+    ready_reasons.extend(
+        verification_facts
+            .iter()
+            .filter(|fact| fact.status == "passed")
+            .map(|fact| {
+                format!(
+                    "relevant verification passed: {} {}",
+                    fact.codex_session_id,
+                    fact.subject.as_deref().unwrap_or("(unknown verification)")
+                )
+            }),
+    );
+    sort_dedup(&mut ready_reasons);
+
+    Ok(ProofDecision {
+        status: "READY",
+        reasons: ready_reasons,
+    })
+}
+
+fn unknown_decision(reason: &str) -> ProofDecision {
+    ProofDecision {
+        status: "UNKNOWN",
+        reasons: vec![reason.to_string()],
+    }
+}
+
+fn sort_dedup(values: &mut Vec<String>) {
+    values.sort();
+    values.dedup();
+}
+
+fn is_decision_evidence(fact: &DecisionFact) -> bool {
+    matches!(fact.kind.as_str(), "verification" | "failure_resolution")
+}
+
+fn load_decision_facts(
+    conn: &Connection,
+    sessions: &BTreeMap<i64, &CorrelatedSession>,
+) -> Result<Vec<DecisionFact>> {
+    let mut facts = Vec::new();
+    for session in sessions.values() {
+        let mut stmt = conn
+            .prepare(
+                "SELECT command_id, kind, subject, status
+                 FROM proof_facts
+                 WHERE session_id = ?1
+                   AND kind IN ('verification', 'failure_resolution')
+                 ORDER BY id",
+            )
+            .context("failed to load proof decision facts")?;
+        let session_facts = stmt
+            .query_map([session.id], |row| {
+                Ok(DecisionFact {
+                    session_id: session.id,
+                    codex_session_id: session.codex_session_id.clone(),
+                    command_id: row.get(0)?,
+                    kind: row.get(1)?,
+                    subject: row.get(2)?,
+                    status: row.get(3)?,
+                })
+            })
+            .context("failed to load proof decision facts")?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .context("failed to load proof decision facts")?;
+        facts.extend(session_facts);
+    }
+
+    facts.sort_by(|left, right| {
+        (
+            left.session_id,
+            left.command_id,
+            left.kind.as_str(),
+            left.status.as_str(),
+            left.subject.as_deref().unwrap_or(""),
+        )
+            .cmp(&(
+                right.session_id,
+                right.command_id,
+                right.kind.as_str(),
+                right.status.as_str(),
+                right.subject.as_deref().unwrap_or(""),
+            ))
+    });
+    Ok(facts)
 }
 
 fn classify_risky_commands(

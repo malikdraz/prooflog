@@ -27,7 +27,7 @@ The current config stores:
 
 `prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, derives session/message/command/approval/file-change rows, and classifies supported verification, failure, and failure-resolution evidence into local proof facts.
 
-`prooflog proof --since main` detects the current git repository context and prints repo root, branch or detached HEAD label, current HEAD, merge base, dirty working tree status, changed files, diff stats, docs-only status, risky changed paths, risky commands from relevant/ambiguous sessions, and relevant/ambiguous Codex sessions from local storage. It remains an explicit proof-report placeholder and does not produce the final proof report yet.
+`prooflog proof --since main` detects the current git repository context and prints repo root, branch or detached HEAD label, current HEAD, merge base, dirty working tree status, changed files, diff stats, docs-only status, risky changed paths, risky commands from relevant/ambiguous sessions, relevant/ambiguous Codex sessions from local storage, and a conservative READY/NOT READY/UNKNOWN decision section. It remains an explicit proof-report placeholder and does not produce the final report format yet.
 
 ## Local Paths
 
@@ -59,7 +59,7 @@ $HOME/.codex
 
 `prooflog ingest --codex` will later add additional proof facts as report needs harden.
 
-`prooflog proof --since main` will later produce the core proof report.
+`prooflog proof --since main` will later produce the final core proof report format and exit-code mapping.
 
 ## Current Argument Contract
 
@@ -88,6 +88,7 @@ It prints:
 - per-file status, path, additions, and deletions
 - risky path level, count, categories, and reasons
 - risky command counts, families, severity, and reasons
+- conservative proof decision status and reasons
 
 Use `--repo <PATH>` to inspect a repository other than the current working directory. Running outside a git repository or passing an invalid base ref fails with an actionable error.
 
@@ -132,7 +133,7 @@ Current command families are:
 - `scp`
 - `ssh`
 
-Risky commands are reported with family, session, command subject, severity, and reason. Production-like or destructive arguments such as `prod`, `production`, `--force`, `delete`, `destroy`, `apply`, `rm -rf`, `chmod 777`, `terraform apply`, `kubectl delete`, and similar patterns raise severity to `high`. ProofLog reports these commands; it does not block them, execute them, print command output, or make a final readiness decision in this placeholder flow.
+Risky commands are reported with family, session, command subject, severity, and reason. Production-like or destructive arguments such as `prod`, `production`, `--force`, `delete`, `destroy`, `apply`, `rm -rf`, `chmod 777`, `terraform apply`, `kubectl delete`, and similar patterns raise severity to `high`. ProofLog reports these commands; it does not block them, execute them, or print command output.
 
 ## Codex Session Correlation
 
@@ -145,6 +146,18 @@ Strong relevant signals include:
 - file-change paths overlapping changed files
 
 Weak file-name-only overlap is reported as ambiguous rather than hidden. Missing or empty local storage reports zero relevant and ambiguous sessions without failing this placeholder proof flow. Final proof reports and final decision exit codes are planned follow-up work.
+
+## Proof Decision
+
+`prooflog proof --since <REF>` prints a `Decision:` section with `status: READY`, `status: NOT READY`, or `status: UNKNOWN`, plus one or more deterministic `reason:` lines.
+
+Current decision rules are intentionally conservative:
+
+- `READY` requires changed files, at least one relevant Codex session, at least one relevant passed verification fact, no unresolved relevant verification failures, and no ambiguous relevant failure-resolution facts.
+- `NOT READY` means relevant evidence proves a verification failure remains unresolved.
+- `UNKNOWN` covers missing local storage, no relevant sessions, no changed files, no relevant verification evidence, unknown-only verification evidence, ambiguous-only evidence, or ambiguous failure resolution.
+
+Decision reasons may include session ids, verification command subjects, and status summaries. They do not print command output or raw transcript text. This decision section does not yet change process exit codes; exit-code behavior is planned separately.
 
 ## SQLite Schema
 
@@ -296,7 +309,7 @@ Resolution status is:
 - `unresolved` when no later passing verification command of the same detector exists
 - `unknown` when later passing evidence exists but compatibility is ambiguous
 
-Resolution facts are linked to the failed command and preserve a deterministic reason. Passing commands from unrelated verification detectors do not resolve failures. Final READY/NOT READY/UNKNOWN decisions are planned follow-up work.
+Resolution facts are linked to the failed command and preserve a deterministic reason. Passing commands from unrelated verification detectors do not resolve failures. The proof decision engine consumes these facts conservatively and prefers UNKNOWN over false READY when evidence is incomplete.
 
 ## Approval Derivation
 

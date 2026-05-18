@@ -1,6 +1,6 @@
 # Demo Script
 
-This is the target first-demo flow. `init`, `doctor`, JSONL file discovery, raw JSONL line storage, raw/message/command-output FTS indexing, session/message/command/approval/file-change derivation, verification/failure/resolution proof facts, proof-command git context plus changed-file detection, risky path and command classification, and session-to-repo correlation are implemented; final decisions and proof report generation are still planned.
+This is the target first-demo flow. `init`, `doctor`, JSONL file discovery, raw JSONL line storage, raw/message/command-output FTS indexing, session/message/command/approval/file-change derivation, verification/failure/resolution proof facts, proof-command git context plus changed-file detection, risky path and command classification, session-to-repo correlation, and conservative READY/NOT READY/UNKNOWN decisions are implemented; final proof report generation is still planned.
 
 ```bash
 cargo install --path .

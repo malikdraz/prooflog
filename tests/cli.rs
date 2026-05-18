@@ -456,7 +456,7 @@ fn proof_reports_risky_commands_from_relevant_sessions() {
                 .and(predicate::str::contains(
                     "reason: production/destructive arguments",
                 ))
-                .and(predicate::str::contains("cargo test").not())
+                .and(predicate::str::contains("elevated cargo").not())
                 .and(predicate::str::contains("customer secret output should not print").not()),
         );
 }
@@ -559,6 +559,358 @@ fn proof_excludes_unrelated_risky_commands() {
                 .and(predicate::str::contains("relevant: 0"))
                 .and(predicate::str::contains("ambiguous: 0"))
                 .and(predicate::str::contains("rm -rf").not()),
+        );
+}
+
+#[test]
+fn proof_decision_ready_with_relevant_passing_verification() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    git(&repo, ["add", "src/main.rs"]);
+    git(&repo, ["commit", "-m", "add code"]);
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    let repo_root = repo.canonicalize().unwrap();
+    fs::write(
+        codex_root.join("ready.jsonl"),
+        format!(
+            "{{\"type\":\"session_meta\",\"timestamp\":\"2026-05-18T15:00:00Z\",\"session_id\":\"session-ready\",\"workspace_path\":\"{}\",\"title\":\"Ready evidence\"}}\n\
+             {{\"type\":\"command\",\"timestamp\":\"2026-05-18T15:00:05Z\",\"session_id\":\"session-ready\",\"command\":{{\"cmd\":\"cargo test\",\"cwd\":\"{}\",\"status\":\"success\",\"exit_code\":0,\"output\":\"SECRET_TOKEN should not print\"}}}}\n",
+            repo_root.display(),
+            repo_root.display()
+        ),
+    )
+    .unwrap();
+
+    env.command()
+        .args(["init", "--codex-root", codex_root.to_str().unwrap()])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    env.command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--db",
+            env.db_file().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Decision:")
+                .and(predicate::str::contains("status: READY"))
+                .and(predicate::str::contains(
+                    "reason: relevant verification passed: session-ready cargo test",
+                ))
+                .and(predicate::str::contains("SECRET_TOKEN").not()),
+        );
+}
+
+#[test]
+fn proof_decision_ready_with_resolved_fail_then_pass() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    git(&repo, ["add", "src/main.rs"]);
+    git(&repo, ["commit", "-m", "add code"]);
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    let repo_root = repo.canonicalize().unwrap();
+    fs::write(
+        codex_root.join("resolved.jsonl"),
+        format!(
+            "{{\"type\":\"session_meta\",\"timestamp\":\"2026-05-18T15:10:00Z\",\"session_id\":\"session-resolved\",\"workspace_path\":\"{}\",\"title\":\"Resolved evidence\"}}\n\
+             {{\"type\":\"command\",\"timestamp\":\"2026-05-18T15:10:05Z\",\"session_id\":\"session-resolved\",\"command\":{{\"cmd\":\"cargo test\",\"cwd\":\"{}\",\"status\":\"failed\",\"exit_code\":101,\"output\":\"failure details should not print\"}}}}\n\
+             {{\"type\":\"command\",\"timestamp\":\"2026-05-18T15:10:30Z\",\"session_id\":\"session-resolved\",\"command\":{{\"cmd\":\"cargo test\",\"cwd\":\"{}\",\"status\":\"success\",\"exit_code\":0,\"output\":\"ok\"}}}}\n",
+            repo_root.display(),
+            repo_root.display(),
+            repo_root.display()
+        ),
+    )
+    .unwrap();
+
+    env.command()
+        .args(["init", "--codex-root", codex_root.to_str().unwrap()])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    env.command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--db",
+            env.db_file().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Decision:")
+                .and(predicate::str::contains("status: READY"))
+                .and(predicate::str::contains(
+                    "reason: resolved verification failure: session-resolved cargo test",
+                ))
+                .and(predicate::str::contains("failure details should not print").not()),
+        );
+}
+
+#[test]
+fn proof_decision_not_ready_with_unresolved_relevant_failure() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    git(&repo, ["add", "src/main.rs"]);
+    git(&repo, ["commit", "-m", "add code"]);
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    let repo_root = repo.canonicalize().unwrap();
+    fs::write(
+        codex_root.join("not-ready.jsonl"),
+        format!(
+            "{{\"type\":\"session_meta\",\"timestamp\":\"2026-05-18T15:20:00Z\",\"session_id\":\"session-not-ready\",\"workspace_path\":\"{}\",\"title\":\"Broken evidence\"}}\n\
+             {{\"type\":\"command\",\"timestamp\":\"2026-05-18T15:20:05Z\",\"session_id\":\"session-not-ready\",\"command\":{{\"cmd\":\"cargo test\",\"cwd\":\"{}\",\"status\":\"failed\",\"exit_code\":101,\"output\":\"private failure should not print\"}}}}\n",
+            repo_root.display(),
+            repo_root.display()
+        ),
+    )
+    .unwrap();
+
+    env.command()
+        .args(["init", "--codex-root", codex_root.to_str().unwrap()])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    env.command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--db",
+            env.db_file().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Decision:")
+                .and(predicate::str::contains("status: NOT READY"))
+                .and(predicate::str::contains(
+                    "reason: unresolved verification failure: session-not-ready cargo test",
+                ))
+                .and(predicate::str::contains("private failure should not print").not()),
+        );
+}
+
+#[test]
+fn proof_decision_unknown_when_db_is_missing() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::write(repo.join("README.md"), "# changed\n").unwrap();
+    git(&repo, ["add", "README.md"]);
+    git(&repo, ["commit", "-m", "change docs"]);
+    let missing_db = env.home.path().join("missing.db");
+
+    env.command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--db",
+            missing_db.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Decision:")
+                .and(predicate::str::contains("status: UNKNOWN"))
+                .and(predicate::str::contains(
+                    "reason: local proof database is missing",
+                )),
+        );
+}
+
+#[test]
+fn proof_decision_unknown_without_relevant_sessions() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    git(&repo, ["add", "src/main.rs"]);
+    git(&repo, ["commit", "-m", "add code"]);
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("unrelated.jsonl"),
+        "{\"type\":\"command\",\"timestamp\":\"2026-05-18T15:30:05Z\",\"session_id\":\"session-unrelated\",\"command\":{\"cmd\":\"cargo test\",\"cwd\":\"/tmp/other\",\"status\":\"success\",\"exit_code\":0}}\n",
+    )
+    .unwrap();
+
+    env.command()
+        .args(["init", "--codex-root", codex_root.to_str().unwrap()])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    env.command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--db",
+            env.db_file().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Decision:")
+                .and(predicate::str::contains("status: UNKNOWN"))
+                .and(predicate::str::contains(
+                    "reason: no relevant Codex sessions",
+                )),
+        );
+}
+
+#[test]
+fn proof_decision_unknown_without_verification_evidence() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    git(&repo, ["add", "src/main.rs"]);
+    git(&repo, ["commit", "-m", "add code"]);
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    let repo_root = repo.canonicalize().unwrap();
+    fs::write(
+        codex_root.join("no-verification.jsonl"),
+        format!(
+            "{{\"type\":\"session_meta\",\"timestamp\":\"2026-05-18T15:40:00Z\",\"session_id\":\"session-no-verification\",\"workspace_path\":\"{}\",\"title\":\"No verification\"}}\n",
+            repo_root.display()
+        ),
+    )
+    .unwrap();
+
+    env.command()
+        .args(["init", "--codex-root", codex_root.to_str().unwrap()])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    env.command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--db",
+            env.db_file().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Decision:")
+                .and(predicate::str::contains("status: UNKNOWN"))
+                .and(predicate::str::contains(
+                    "reason: no relevant verification evidence",
+                )),
+        );
+}
+
+#[test]
+fn proof_decision_unknown_with_ambiguous_only_evidence() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    git(&repo, ["add", "src/main.rs"]);
+    git(&repo, ["commit", "-m", "add code"]);
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("ambiguous-decision.jsonl"),
+        concat!(
+            "{\"type\":\"file_change\",\"timestamp\":\"2026-05-18T15:50:00Z\",\"session_id\":\"session-ambiguous-decision\",\"file_change\":{\"path\":\"main.rs\",\"change_type\":\"modified\",\"lines_added\":1,\"lines_deleted\":0}}\n",
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T15:50:10Z\",\"session_id\":\"session-ambiguous-decision\",\"command\":{\"cmd\":\"cargo test\",\"status\":\"success\",\"exit_code\":0}}\n"
+        ),
+    )
+    .unwrap();
+
+    env.command()
+        .args(["init", "--codex-root", codex_root.to_str().unwrap()])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    env.command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--db",
+            env.db_file().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Decision:")
+                .and(predicate::str::contains("status: UNKNOWN"))
+                .and(predicate::str::contains(
+                    "reason: only ambiguous verification evidence found",
+                )),
         );
 }
 
