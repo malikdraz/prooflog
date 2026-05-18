@@ -1156,6 +1156,111 @@ fn repeated_ingest_does_not_duplicate_approvals() {
 }
 
 #[test]
+fn ingest_derives_file_changes_from_raw_events() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("05_file_edits_diff.jsonl"),
+        include_str!("fixtures/codex/05_file_edits_diff.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let changes = file_change_rows(env.db_file());
+    assert_eq!(changes.len(), 3);
+    assert!(changes.iter().all(|change| change.raw_event_id > 0));
+    assert!(changes.iter().all(|change| change.session_id.is_some()));
+    assert_eq!(changes[0].path, ".github/workflows/ci.yml");
+    assert_eq!(changes[0].change_type.as_deref(), Some("modified"));
+    assert_eq!(changes[0].lines_added, Some(2));
+    assert_eq!(changes[0].lines_deleted, Some(2));
+    assert!(changes[0]
+        .diff_text
+        .as_deref()
+        .is_some_and(|diff| diff.contains("cargo clippy --all-targets")));
+    assert_eq!(changes[1].path, "docs/cli.md");
+    assert_eq!(changes[1].lines_added, Some(2));
+    assert_eq!(changes[1].lines_deleted, Some(0));
+    assert_eq!(changes[2].path, "src/main.rs");
+    assert_eq!(changes[2].lines_added, Some(3));
+    assert_eq!(changes[2].lines_deleted, Some(1));
+}
+
+#[test]
+fn file_change_derivation_allows_missing_optional_fields() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("file_changes.jsonl"),
+        concat!(
+            "{\"type\":\"file_change\",\"timestamp\":\"2026-05-18T14:00:00Z\",\"file_change\":{\"path\":\"src/lib.rs\"}}\n",
+            "{\"type\":\"file_change\",\"timestamp\":\"2026-05-18T14:00:10Z\",\"file_change\":{\"change_type\":\"modified\"}}\n",
+            "not json\n"
+        ),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let changes = file_change_rows(env.db_file());
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].path, "src/lib.rs");
+    assert!(changes[0].session_id.is_none());
+    assert!(changes[0].change_type.is_none());
+    assert!(changes[0].diff_text.is_none());
+    assert!(changes[0].lines_added.is_none());
+    assert!(changes[0].lines_deleted.is_none());
+}
+
+#[test]
+fn repeated_ingest_does_not_duplicate_file_changes() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("05_file_edits_diff.jsonl"),
+        include_str!("fixtures/codex/05_file_edits_diff.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    for _ in 0..2 {
+        env.command()
+            .args([
+                "ingest",
+                "--codex",
+                "--codex-root",
+                codex_root.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+    }
+
+    assert_eq!(file_change_rows(env.db_file()).len(), 3);
+}
+
+#[test]
 fn doctor_reports_missing_raw_event_fts_table() {
     let env = CliEnv::new();
     env.command().arg("init").assert().success();
@@ -1405,6 +1510,16 @@ struct ApprovalRow {
     created_at: Option<String>,
 }
 
+struct FileChangeRow {
+    raw_event_id: i64,
+    session_id: Option<i64>,
+    path: String,
+    change_type: Option<String>,
+    diff_text: Option<String>,
+    lines_added: Option<i64>,
+    lines_deleted: Option<i64>,
+}
+
 fn codex_file_rows(db_path: impl AsRef<std::path::Path>) -> Vec<CodexFileRow> {
     let conn = Connection::open(db_path).unwrap();
     let mut stmt = conn
@@ -1542,6 +1657,31 @@ fn approval_rows(db_path: impl AsRef<std::path::Path>) -> Vec<ApprovalRow> {
             sandbox_mode: row.get(4)?,
             command: row.get(5)?,
             created_at: row.get(6)?,
+        })
+    })
+    .unwrap()
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()
+}
+
+fn file_change_rows(db_path: impl AsRef<std::path::Path>) -> Vec<FileChangeRow> {
+    let conn = Connection::open(db_path).unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT raw_event_id, session_id, path, change_type, diff_text, lines_added, lines_deleted
+             FROM file_changes
+             ORDER BY path",
+        )
+        .unwrap();
+    stmt.query_map([], |row| {
+        Ok(FileChangeRow {
+            raw_event_id: row.get(0)?,
+            session_id: row.get(1)?,
+            path: row.get(2)?,
+            change_type: row.get(3)?,
+            diff_text: row.get(4)?,
+            lines_added: row.get(5)?,
+            lines_deleted: row.get(6)?,
         })
     })
     .unwrap()

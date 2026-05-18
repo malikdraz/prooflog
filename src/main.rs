@@ -286,6 +286,7 @@ fn discover_and_record_codex_files(conn: &mut Connection, root: &Path) -> Result
     derive_messages(&tx)?;
     derive_commands(&tx)?;
     derive_approvals(&tx)?;
+    derive_file_changes(&tx)?;
     rebuild_raw_events_fts(&tx)?;
     rebuild_messages_fts(&tx)?;
     rebuild_command_output_fts(&tx)?;
@@ -976,6 +977,97 @@ fn extract_approval(value: &Value) -> Option<DerivedApproval> {
         decision: string_field(approval, &["decision"]),
         sandbox_mode: string_field(approval, &["sandbox_mode"]),
         command: string_field(approval, &["command"]),
+    })
+}
+
+fn derive_file_changes(conn: &Connection) -> Result<()> {
+    conn.execute("DELETE FROM file_changes", [])
+        .context("failed to refresh derived file changes")?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, session_id, raw_json
+             FROM raw_events
+             WHERE parse_error IS NULL
+             ORDER BY codex_file_id, line_number",
+        )
+        .context("failed to derive file changes from raw events")?;
+    let mut rows = stmt
+        .query([])
+        .context("failed to derive file changes from raw events")?;
+
+    while let Some(row) = rows
+        .next()
+        .context("failed to derive file changes from raw events")?
+    {
+        let raw_event_id: i64 = row
+            .get(0)
+            .context("failed to derive file changes from raw events")?;
+        let session_id: Option<i64> = row
+            .get(1)
+            .context("failed to derive file changes from raw events")?;
+        let raw_json: String = row
+            .get(2)
+            .context("failed to derive file changes from raw events")?;
+        let value: Value = serde_json::from_str(&raw_json)
+            .context("failed to derive file changes from raw events")?;
+        let Some(file_change) = extract_file_change(&value) else {
+            continue;
+        };
+
+        conn.execute(
+            "INSERT INTO file_changes (
+                raw_event_id,
+                session_id,
+                path,
+                change_type,
+                diff_text,
+                lines_added,
+                lines_deleted
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (
+                raw_event_id,
+                session_id,
+                file_change.path.as_str(),
+                file_change.change_type.as_deref(),
+                file_change.diff_text.as_deref(),
+                file_change.lines_added,
+                file_change.lines_deleted,
+            ),
+        )
+        .context("failed to record derived file change")?;
+    }
+
+    Ok(())
+}
+
+#[derive(Debug)]
+struct DerivedFileChange {
+    path: String,
+    change_type: Option<String>,
+    diff_text: Option<String>,
+    lines_added: Option<i64>,
+    lines_deleted: Option<i64>,
+}
+
+fn extract_file_change(value: &Value) -> Option<DerivedFileChange> {
+    if value.get("type").and_then(Value::as_str) != Some("file_change") {
+        return None;
+    }
+
+    let file_change = value.get("file_change")?;
+    let path = file_change.get("path").and_then(Value::as_str)?.trim();
+    if path.is_empty() {
+        return None;
+    }
+
+    Some(DerivedFileChange {
+        path: path.to_owned(),
+        change_type: string_field(file_change, &["change_type"]),
+        diff_text: string_field(file_change, &["diff", "diff_text"]),
+        lines_added: file_change.get("lines_added").and_then(Value::as_i64),
+        lines_deleted: file_change.get("lines_deleted").and_then(Value::as_i64),
     })
 }
 

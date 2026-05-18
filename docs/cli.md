@@ -25,7 +25,7 @@ The current config stores:
 - Codex root
 - redaction defaults
 
-`prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, and derives session/message/command/approval rows.
+`prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, and derives session/message/command/approval/file-change rows.
 
 `prooflog proof --since main` is still an explicit placeholder. It does not inspect git state or produce proof reports yet.
 
@@ -57,7 +57,7 @@ $HOME/.codex
 
 `prooflog doctor` will later add deeper parser diagnostics and richer git edge-case handling.
 
-`prooflog ingest --codex` will later derive file changes and proof facts from stored raw lines.
+`prooflog ingest --codex` will later derive proof facts from stored raw lines.
 
 `prooflog proof --since main` will produce the core proof report.
 
@@ -91,7 +91,7 @@ It also creates these FTS5 tables:
 - `messages_fts`
 - `command_output_fts`
 
-The schema is raw-first. Current ingest populates `codex_files`, `raw_events`, `sessions`, `messages`, `commands`, and `approvals`; later parser work will populate the remaining derived tables.
+The schema is raw-first. Current ingest populates `codex_files`, `raw_events`, `sessions`, `messages`, `commands`, `approvals`, and `file_changes`; later parser work will populate the remaining derived tables.
 
 ## Codex Discovery
 
@@ -197,7 +197,23 @@ When available, each derived approval records:
 - command
 - event timestamp
 
-Missing approval fields are stored as NULL. Unknown approval shapes are skipped instead of guessed. Ingest does not print approval commands or raw transcript content by default. File-change extraction, proof-fact classification, git correlation, approval counts in reports, and proof report behavior are planned follow-up work.
+Missing approval fields are stored as NULL. Unknown approval shapes are skipped instead of guessed. Ingest does not print approval commands or raw transcript content by default.
+
+## File-Change Derivation
+
+Ingest derives `file_changes` rows from parseable file-change events with a known path.
+
+When available, each derived file change records:
+
+- raw event link
+- session link
+- path
+- change type
+- diff text
+- lines added
+- lines deleted
+
+Missing optional file-change fields are stored as NULL. Missing paths and unknown file-change shapes are skipped instead of guessed. Ingest does not print raw diff text by default. Proof-fact classification, git correlation, and proof report behavior are planned follow-up work.
 
 ## Permission Warnings
 

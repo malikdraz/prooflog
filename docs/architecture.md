@@ -29,7 +29,7 @@ Raw events are the source of truth. Derived tables are disposable.
    - messages derived during ingest
    - commands derived during ingest
    - approvals derived during ingest
-   - file changes
+   - file changes derived during ingest
    - proof facts
 6. Git correlation
    - repo root
@@ -52,7 +52,7 @@ Raw events are the source of truth. Derived tables are disposable.
 
 ## Data Model Notes
 
-The current MVP schema initializes these tables. `codex_files` is populated by discovery, `raw_events` is populated by raw ingestion, and `sessions`/`messages`/`commands`/`approvals` are derived during ingest. The remaining derived tables are populated by later extraction work.
+The current MVP schema initializes these tables. `codex_files` is populated by discovery, `raw_events` is populated by raw ingestion, and `sessions`/`messages`/`commands`/`approvals`/`file_changes` are derived during ingest. The remaining derived tables are populated by later extraction work.
 
 - `codex_files`
 - `sessions`
