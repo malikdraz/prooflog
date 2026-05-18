@@ -193,6 +193,141 @@ fn proof_reports_deleted_and_renamed_files() {
 }
 
 #[test]
+fn proof_correlates_sessions_to_current_repo() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    git(&repo, ["add", "src/main.rs"]);
+    git(&repo, ["commit", "-m", "add code"]);
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    let repo_root = repo.canonicalize().unwrap();
+    fs::write(
+        codex_root.join("repo-session.jsonl"),
+        format!(
+            "{{\"type\":\"session_meta\",\"timestamp\":\"2026-05-18T14:00:00Z\",\"session_id\":\"session-repo\",\"workspace_path\":\"{}\",\"title\":\"Repo work\"}}\n\
+             {{\"type\":\"command\",\"timestamp\":\"2026-05-18T14:00:05Z\",\"session_id\":\"session-repo\",\"command\":{{\"cmd\":\"cargo test\",\"cwd\":\"{}\",\"status\":\"success\",\"exit_code\":0}}}}\n\
+             {{\"type\":\"file_change\",\"timestamp\":\"2026-05-18T14:00:10Z\",\"session_id\":\"session-repo\",\"file_change\":{{\"path\":\"src/main.rs\",\"change_type\":\"modified\",\"lines_added\":1,\"lines_deleted\":0}}}}\n",
+            repo_root.display(),
+            repo_root.display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        codex_root.join("other-session.jsonl"),
+        "{\"type\":\"session_meta\",\"timestamp\":\"2026-05-18T15:00:00Z\",\"session_id\":\"session-other\",\"workspace_path\":\"/tmp/other\",\"title\":\"Other work\"}\n",
+    )
+    .unwrap();
+
+    env.command()
+        .args(["init", "--codex-root", codex_root.to_str().unwrap()])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    env.command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--db",
+            env.db_file().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Codex:")
+                .and(predicate::str::contains("relevant sessions: 1"))
+                .and(predicate::str::contains("ambiguous sessions: 0"))
+                .and(predicate::str::contains(
+                    "session-repo Repo work [workspace, command-cwd, file-change]",
+                ))
+                .and(predicate::str::contains("session-other").not()),
+        );
+}
+
+#[test]
+fn proof_reports_ambiguous_session_overlap() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    git(&repo, ["add", "src/main.rs"]);
+    git(&repo, ["commit", "-m", "add code"]);
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("ambiguous-session.jsonl"),
+        "{\"type\":\"file_change\",\"timestamp\":\"2026-05-18T14:00:10Z\",\"session_id\":\"session-ambiguous\",\"file_change\":{\"path\":\"main.rs\",\"change_type\":\"modified\",\"lines_added\":1,\"lines_deleted\":0}}\n",
+    )
+    .unwrap();
+
+    env.command()
+        .args(["init", "--codex-root", codex_root.to_str().unwrap()])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    env.command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--db",
+            env.db_file().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("relevant sessions: 0")
+                .and(predicate::str::contains("ambiguous sessions: 1"))
+                .and(predicate::str::contains(
+                    "session-ambiguous (untitled) [ambiguous-file-name]",
+                )),
+        );
+}
+
+#[test]
+fn proof_handles_missing_db_for_session_correlation() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    let missing_db = env.home.path().join("missing.db");
+
+    env.command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main",
+            "--db",
+            missing_db.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Codex:")
+                .and(predicate::str::contains("relevant sessions: 0"))
+                .and(predicate::str::contains("ambiguous sessions: 0")),
+        );
+}
+
+#[test]
 fn init_creates_config_with_resolved_local_paths() {
     let env = CliEnv::new();
 

@@ -27,7 +27,7 @@ The current config stores:
 
 `prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, and derives session/message/command/approval/file-change rows.
 
-`prooflog proof --since main` detects the current git repository context and prints repo root, branch or detached HEAD label, current HEAD, merge base, dirty working tree status, changed files, diff stats, and docs-only status. It remains an explicit proof-report placeholder and does not produce the final proof report yet.
+`prooflog proof --since main` detects the current git repository context and prints repo root, branch or detached HEAD label, current HEAD, merge base, dirty working tree status, changed files, diff stats, docs-only status, and relevant/ambiguous Codex sessions from local storage. It remains an explicit proof-report placeholder and does not produce the final proof report yet.
 
 ## Local Paths
 
@@ -87,7 +87,19 @@ It prints:
 - docs-only status
 - per-file status, path, additions, and deletions
 
-Use `--repo <PATH>` to inspect a repository other than the current working directory. Running outside a git repository or passing an invalid base ref fails with an actionable error. Codex evidence correlation, final proof reports, and final decision exit codes are planned follow-up work.
+Use `--repo <PATH>` to inspect a repository other than the current working directory. Running outside a git repository or passing an invalid base ref fails with an actionable error.
+
+## Codex Session Correlation
+
+`prooflog proof --since <REF>` reads the local ProofLog database when available and prints relevant and ambiguous Codex session counts.
+
+Strong relevant signals include:
+
+- session workspace path matching the repo root
+- command cwd inside the repo
+- file-change paths overlapping changed files
+
+Weak file-name-only overlap is reported as ambiguous rather than hidden. Missing or empty local storage reports zero relevant and ambiguous sessions without failing this placeholder proof flow. Proof-fact extraction, final proof reports, and final decision exit codes are planned follow-up work.
 
 ## SQLite Schema
 

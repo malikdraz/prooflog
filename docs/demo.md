@@ -1,6 +1,6 @@
 # Demo Script
 
-This is the target first-demo flow. `init`, `doctor`, JSONL file discovery, raw JSONL line storage, raw/message/command-output FTS indexing, session/message/command/approval/file-change derivation, and proof-command git context plus changed-file detection are implemented; richer derived extraction and proof report generation are still planned.
+This is the target first-demo flow. `init`, `doctor`, JSONL file discovery, raw JSONL line storage, raw/message/command-output FTS indexing, session/message/command/approval/file-change derivation, proof-command git context plus changed-file detection, and session-to-repo correlation are implemented; richer derived extraction and proof report generation are still planned.
 
 ```bash
 cargo install --path .

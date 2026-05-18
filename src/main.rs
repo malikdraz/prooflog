@@ -1,7 +1,7 @@
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     env,
     fs::{self, File},
     io::{BufRead, BufReader, Read},
@@ -129,11 +129,14 @@ fn ingest_codex(args: IngestArgs) -> Result<()> {
 }
 
 fn proof_git_context(args: ProofArgs) -> Result<()> {
+    let since = args.since;
+    let db_path = resolve_proof_db_path(args.db)?;
     let repo_path = args.repo.unwrap_or(env::current_dir().context(
         "failed to resolve current directory; pass --repo <PATH> to choose a repository",
     )?);
-    let git = inspect_proof_git(&repo_path, &args.since)?;
+    let git = inspect_proof_git(&repo_path, &since)?;
     let changed = inspect_changed_files(&git.repo_root, &git.merge_base)?;
+    let correlation = correlate_sessions(&db_path, &git.repo_root, &changed)?;
 
     println!("Git:");
     println!("  repo: {}", git.repo_root.display());
@@ -142,10 +145,22 @@ fn proof_git_context(args: ProofArgs) -> Result<()> {
     println!("  merge base: {}", git.merge_base);
     println!("  dirty: {}", if git.dirty { "yes" } else { "no" });
     print_changed_files(&changed);
+    print_session_correlation(&correlation);
     println!("Proof:");
-    println!("  since: {}", args.since);
+    println!("  since: {since}");
     println!("  proof report: not implemented yet");
     Ok(())
+}
+
+fn resolve_proof_db_path(db_path: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(db_path) = db_path {
+        return Ok(db_path);
+    }
+
+    let paths = ProoflogPaths::resolve()?;
+    Ok(ProoflogConfig::read(&paths.config_file)
+        .map(|config| config.db_path)
+        .unwrap_or(paths.db_file))
 }
 
 fn print_changed_files(changed: &ChangedFiles) {
@@ -164,6 +179,28 @@ fn print_changed_files(changed: &ChangedFiles) {
             file.display_path(),
             display_stat(file.additions),
             display_stat(file.deletions)
+        );
+    }
+}
+
+fn print_session_correlation(correlation: &SessionCorrelation) {
+    println!("Codex:");
+    println!("  relevant sessions: {}", correlation.relevant.len());
+    println!("  ambiguous sessions: {}", correlation.ambiguous.len());
+    for session in &correlation.relevant {
+        println!(
+            "  {} {} [{}]",
+            session.codex_session_id,
+            session.title.as_deref().unwrap_or("(untitled)"),
+            session.signals.join(", ")
+        );
+    }
+    for session in &correlation.ambiguous {
+        println!(
+            "  {} {} [{}]",
+            session.codex_session_id,
+            session.title.as_deref().unwrap_or("(untitled)"),
+            session.signals.join(", ")
         );
     }
 }
@@ -283,6 +320,29 @@ impl ChangedFile {
             None => self.path.clone(),
         }
     }
+}
+
+#[derive(Debug, Default)]
+struct SessionCorrelation {
+    relevant: Vec<CorrelatedSession>,
+    ambiguous: Vec<CorrelatedSession>,
+}
+
+#[derive(Debug)]
+struct CorrelatedSession {
+    codex_session_id: String,
+    title: Option<String>,
+    signals: Vec<String>,
+}
+
+#[derive(Debug)]
+struct StoredSession {
+    id: i64,
+    codex_session_id: String,
+    title: Option<String>,
+    workspace_path: Option<String>,
+    command_cwds: Vec<String>,
+    file_paths: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -1404,6 +1464,158 @@ fn display_stat(value: Option<i64>) -> String {
 
 fn is_docs_path(path: &str) -> bool {
     path == "README.md" || path == "AGENTS.md" || path.starts_with("docs/") || path.ends_with(".md")
+}
+
+fn correlate_sessions(
+    db_path: &Path,
+    repo_root: &Path,
+    changed: &ChangedFiles,
+) -> Result<SessionCorrelation> {
+    if !db_path.exists() {
+        return Ok(SessionCorrelation::default());
+    }
+
+    let conn = open_existing_database(db_path)?;
+    let sessions = load_stored_sessions(&conn)?;
+    let changed_paths: BTreeSet<&str> = changed
+        .files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect();
+    let changed_names: BTreeSet<String> = changed
+        .files
+        .iter()
+        .filter_map(|file| Path::new(&file.path).file_name())
+        .map(|name| name.to_string_lossy().to_string())
+        .collect();
+    let mut correlation = SessionCorrelation::default();
+
+    for session in sessions {
+        let mut signals = Vec::new();
+        if session
+            .workspace_path
+            .as_deref()
+            .is_some_and(|path| same_path(path, repo_root))
+        {
+            signals.push("workspace".to_string());
+        }
+        if session
+            .command_cwds
+            .iter()
+            .any(|cwd| path_inside_repo(cwd, repo_root))
+        {
+            signals.push("command-cwd".to_string());
+        }
+        if session
+            .file_paths
+            .iter()
+            .any(|path| changed_paths.contains(path.as_str()))
+        {
+            signals.push("file-change".to_string());
+        }
+
+        if !signals.is_empty() {
+            correlation.relevant.push(CorrelatedSession {
+                codex_session_id: session.codex_session_id,
+                title: session.title,
+                signals,
+            });
+            continue;
+        }
+
+        let ambiguous = session.file_paths.iter().any(|path| {
+            Path::new(path)
+                .file_name()
+                .is_some_and(|name| changed_names.contains(&name.to_string_lossy().to_string()))
+        });
+        if ambiguous {
+            correlation.ambiguous.push(CorrelatedSession {
+                codex_session_id: session.codex_session_id,
+                title: session.title,
+                signals: vec!["ambiguous-file-name".to_string()],
+            });
+        }
+    }
+
+    correlation
+        .relevant
+        .sort_by(|left, right| left.codex_session_id.cmp(&right.codex_session_id));
+    correlation
+        .ambiguous
+        .sort_by(|left, right| left.codex_session_id.cmp(&right.codex_session_id));
+    Ok(correlation)
+}
+
+fn load_stored_sessions(conn: &Connection) -> Result<Vec<StoredSession>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, codex_session_id, title, workspace_path
+             FROM sessions
+             ORDER BY codex_session_id",
+        )
+        .context("failed to load stored sessions")?;
+    let mut sessions = stmt
+        .query_map([], |row| {
+            Ok(StoredSession {
+                id: row.get(0)?,
+                codex_session_id: row
+                    .get::<_, Option<String>>(1)?
+                    .unwrap_or_else(|| "(unknown-session)".to_string()),
+                title: row.get(2)?,
+                workspace_path: row.get(3)?,
+                command_cwds: Vec::new(),
+                file_paths: Vec::new(),
+            })
+        })
+        .context("failed to load stored sessions")?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("failed to load stored sessions")?;
+
+    for session in &mut sessions {
+        session.command_cwds = load_session_strings(conn, "commands", "cwd", session.id)?;
+        session.file_paths = load_session_strings(conn, "file_changes", "path", session.id)?;
+    }
+
+    Ok(sessions)
+}
+
+fn load_session_strings(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    session_id: i64,
+) -> Result<Vec<String>> {
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {column} FROM {table}
+             WHERE session_id = ?1 AND {column} IS NOT NULL
+             ORDER BY {column}"
+        ))
+        .with_context(|| format!("failed to load {table}.{column} values"))?;
+    let values = stmt
+        .query_map([session_id], |row| row.get(0))
+        .with_context(|| format!("failed to load {table}.{column} values"))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .with_context(|| format!("failed to load {table}.{column} values"))?;
+    Ok(values)
+}
+
+fn same_path(path: &str, repo_root: &Path) -> bool {
+    normalize_path(path) == normalize_path(repo_root)
+}
+
+fn path_inside_repo(path: &str, repo_root: &Path) -> bool {
+    let path = normalize_path(path);
+    let repo_root = normalize_path(repo_root);
+    path == repo_root || path.starts_with(format!("{repo_root}/").as_str())
+}
+
+fn normalize_path(path: impl AsRef<Path>) -> String {
+    path.as_ref()
+        .canonicalize()
+        .unwrap_or_else(|_| path.as_ref().to_path_buf())
+        .to_string_lossy()
+        .to_string()
 }
 
 fn run_git<const N: usize>(args: [&str; N]) -> Option<String> {
