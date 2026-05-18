@@ -21,6 +21,7 @@ Create five redacted fixtures from real Codex JSONL.
 4. `04_approval_risk.jsonl`
    - approvals, sandbox or network friction, risky command
    - expected: approval extraction and risk facts
+   - status: present at `tests/fixtures/codex/04_approval_risk.jsonl`
 5. `05_file_edits_diff.jsonl`
    - file edits and diffs across code, config, and docs
    - expected: changed paths and risky path categories

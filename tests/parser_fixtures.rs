@@ -36,6 +36,18 @@ fn fixture_03_unresolved_failure_is_not_ready() {
     assert_eq!(fixture.decision(), "NOT READY");
 }
 
+#[test]
+fn fixture_04_approval_risk_covers_approval_and_risk_shapes() {
+    let fixture = parse_fixture("tests/fixtures/codex/04_approval_risk.jsonl");
+
+    assert_eq!(fixture.sessions, 1);
+    assert!(fixture.approvals >= 1);
+    assert_eq!(fixture.approved_actions, 1);
+    assert_eq!(fixture.sandbox_approval_events, 1);
+    assert!(fixture.risk_facts >= 1);
+    assert!(fixture.friction_facts >= 1);
+}
+
 #[derive(Default)]
 struct FixtureSummary {
     sessions: usize,
@@ -49,6 +61,11 @@ struct FixtureSummary {
     resolved_failures: usize,
     unresolved_failures: usize,
     open_failures: Vec<String>,
+    approvals: usize,
+    approved_actions: usize,
+    sandbox_approval_events: usize,
+    risk_facts: usize,
+    friction_facts: usize,
 }
 
 impl FixtureSummary {
@@ -101,6 +118,12 @@ fn apply_fixture_event(summary: &mut FixtureSummary, value: &Value) {
         },
         Some("command") => {
             summary.commands += 1;
+            if is_risky_command(value) {
+                summary.risk_facts += 1;
+            }
+            if has_friction_signal(value) {
+                summary.friction_facts += 1;
+            }
             if !is_verification_command(value) {
                 return;
             }
@@ -122,6 +145,25 @@ fn apply_fixture_event(summary: &mut FixtureSummary, value: &Value) {
                 summary.fail_proof_facts += 1;
                 summary.open_failures.push(subject);
                 summary.unresolved_failures += 1;
+            }
+        }
+        Some("approval") => {
+            summary.approvals += 1;
+            if value
+                .get("approval")
+                .and_then(|approval| approval.get("decision"))
+                .and_then(Value::as_str)
+                == Some("approved")
+            {
+                summary.approved_actions += 1;
+            }
+            if value
+                .get("approval")
+                .and_then(|approval| approval.get("sandbox_mode"))
+                .and_then(Value::as_str)
+                .is_some()
+            {
+                summary.sandbox_approval_events += 1;
             }
         }
         _ => {}
@@ -157,4 +199,25 @@ fn verification_subject(value: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or("unknown")
         .to_string()
+}
+
+fn is_risky_command(value: &Value) -> bool {
+    let command = value
+        .pointer("/command/cmd")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let first = command.split_whitespace().next().unwrap_or_default();
+    matches!(
+        first,
+        "aws" | "kubectl" | "terraform" | "helm" | "docker" | "rm" | "gh"
+    )
+}
+
+fn has_friction_signal(value: &Value) -> bool {
+    let output = value
+        .pointer("/command/output")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    output.contains("sandbox") || output.contains("network") || output.contains("permission")
 }
