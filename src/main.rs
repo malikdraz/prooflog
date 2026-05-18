@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tracing::debug;
 use tracing_subscriber::EnvFilter;
@@ -161,6 +161,7 @@ fn proof_git_context(args: ProofArgs) -> Result<ExitCode> {
     match args.format {
         ProofFormat::Text => print_plain_text_report(report),
         ProofFormat::Md => print_markdown_report(report),
+        ProofFormat::Json => print_json_report(report)?,
     }
     Ok(exit_code_for_decision(&decision))
 }
@@ -188,6 +189,7 @@ fn resolve_proof_db_path(db_path: Option<PathBuf>) -> Result<PathBuf> {
 enum ProofFormat {
     Text,
     Md,
+    Json,
 }
 
 struct ProofReport<'a> {
@@ -463,6 +465,131 @@ fn print_markdown_risky_command(scope: &str, finding: &RiskyCommandFinding) {
         md_cell(&finding.command),
         md_cell(finding.reason)
     );
+}
+
+fn print_json_report(report: ProofReport<'_>) -> Result<()> {
+    let payload = json!({
+        "schema_version": 1,
+        "format": "json",
+        "scope": {
+            "repo": report.git.repo_root.display().to_string(),
+            "branch": report.git.branch,
+            "since": report.since,
+            "head": report.git.head,
+            "merge_base": report.git.merge_base,
+            "dirty": report.git.dirty,
+        },
+        "changed": {
+            "files_count": report.changed.files.len(),
+            "additions": report.changed.total_additions,
+            "deletions": report.changed.total_deletions,
+            "docs_only": report.changed.docs_only,
+            "files": report.changed.files.iter().map(json_changed_file).collect::<Vec<_>>(),
+        },
+        "codex": {
+            "relevant_sessions_count": report.correlation.relevant.len(),
+            "ambiguous_sessions_count": report.correlation.ambiguous.len(),
+            "relevant_sessions": report.correlation.relevant.iter().map(json_correlated_session).collect::<Vec<_>>(),
+            "ambiguous_sessions": report.correlation.ambiguous.iter().map(json_correlated_session).collect::<Vec<_>>(),
+        },
+        "verification": json_verification(report.facts),
+        "failures": json_failures(report.facts),
+        "risks": {
+            "changed_paths": {
+                "level": report.risk.level,
+                "risky_files": report.risk.risky_file_count,
+                "findings": report.risk.findings.iter().map(json_risk_finding).collect::<Vec<_>>(),
+            },
+            "commands": {
+                "relevant_count": report.risky_commands.relevant.len(),
+                "ambiguous_count": report.risky_commands.ambiguous.len(),
+                "relevant": report.risky_commands.relevant.iter().map(json_risky_command).collect::<Vec<_>>(),
+                "ambiguous": report.risky_commands.ambiguous.iter().map(json_risky_command).collect::<Vec<_>>(),
+            },
+        },
+        "decision": {
+            "status": report.decision.status,
+            "reasons": report.decision.reasons,
+        },
+        "next_actions": [next_step(report.decision)],
+    });
+    println!("{}", serde_json::to_string_pretty(&payload)?);
+    Ok(())
+}
+
+fn json_changed_file(file: &ChangedFile) -> Value {
+    json!({
+        "status": file.status,
+        "path": file.path,
+        "previous_path": file.previous_path,
+        "display_path": file.display_path(),
+        "additions": file.additions,
+        "deletions": file.deletions,
+    })
+}
+
+fn json_correlated_session(session: &CorrelatedSession) -> Value {
+    json!({
+        "id": session.codex_session_id,
+        "title": session.title,
+        "signals": session.signals,
+    })
+}
+
+fn json_verification(facts: &[DecisionFact]) -> Value {
+    let verification_facts = facts
+        .iter()
+        .filter(|fact| fact.kind == "verification")
+        .collect::<Vec<_>>();
+    json!({
+        "facts_count": verification_facts.len(),
+        "passed": verification_facts.iter().filter(|fact| fact.status == "passed").count(),
+        "failed": verification_facts.iter().filter(|fact| fact.status == "failed").count(),
+        "unknown": verification_facts.iter().filter(|fact| fact.status == "unknown").count(),
+        "facts": verification_facts.iter().map(|fact| json_fact(fact)).collect::<Vec<_>>(),
+    })
+}
+
+fn json_failures(facts: &[DecisionFact]) -> Value {
+    let failure_facts = facts
+        .iter()
+        .filter(|fact| fact.kind == "failure_resolution")
+        .collect::<Vec<_>>();
+    json!({
+        "failure_resolutions_count": failure_facts.len(),
+        "unresolved": failure_facts.iter().filter(|fact| fact.status == "unresolved").count(),
+        "resolved": failure_facts.iter().filter(|fact| fact.status == "resolved").count(),
+        "ambiguous": failure_facts.iter().filter(|fact| fact.status == "unknown").count(),
+        "facts": failure_facts.iter().map(|fact| json_fact(fact)).collect::<Vec<_>>(),
+    })
+}
+
+fn json_fact(fact: &DecisionFact) -> Value {
+    json!({
+        "session_id": fact.codex_session_id,
+        "kind": fact.kind,
+        "subject": fact.subject,
+        "status": fact.status,
+    })
+}
+
+fn json_risk_finding(finding: &RiskFinding) -> Value {
+    json!({
+        "category": finding.category,
+        "path": finding.path,
+        "reason": finding.reason,
+    })
+}
+
+fn json_risky_command(finding: &RiskyCommandFinding) -> Value {
+    json!({
+        "session_id": finding.codex_session_id,
+        "session_title": finding.session_title,
+        "family": finding.family,
+        "severity": finding.severity,
+        "reason": finding.reason,
+        "command": finding.command,
+    })
 }
 
 fn md_cell(value: impl std::fmt::Display) -> String {

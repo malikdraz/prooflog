@@ -29,7 +29,7 @@ As a senior engineer, before opening or reviewing an agent-assisted PR, I want a
 - Parser fixtures from local Codex traces
 - Git diff correlation
 - Verification, failure, and risk detectors
-- Text and Markdown reports
+- Text, Markdown, and JSON reports
 - Exit codes:
   - `0` READY
   - `1` NOT READY

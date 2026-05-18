@@ -45,6 +45,7 @@ Raw events are the source of truth. Derived tables are disposable.
 8. Report renderer
    - plain text report
    - Markdown report
+   - experimental JSON report
    - deterministic output
    - useful exit codes
 

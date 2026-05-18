@@ -27,7 +27,7 @@ The current config stores:
 
 `prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, derives session/message/command/approval/file-change rows, and classifies supported verification, failure, and failure-resolution evidence into local proof facts.
 
-`prooflog proof --since main` emits a proof report with scope, changed files, Codex evidence, verification, failures, risks, a conservative READY/NOT READY/UNKNOWN decision, why, and next steps. The default output is plain text. Use `--format md` for a PR-pasteable Markdown report or `--format text` to request plain text explicitly.
+`prooflog proof --since main` emits a proof report with scope, changed files, Codex evidence, verification, failures, risks, a conservative READY/NOT READY/UNKNOWN decision, why, and next steps. The default output is plain text. Use `--format md` for a PR-pasteable Markdown report, `--format json` for experimental machine-readable output, or `--format text` to request plain text explicitly.
 
 ## Local Paths
 
@@ -59,11 +59,11 @@ $HOME/.codex
 
 `prooflog ingest --codex` will later add additional proof facts as report needs harden.
 
-`prooflog proof --since main` will later add JSON output.
+`prooflog proof --since main` will later harden the experimental JSON schema as report needs settle.
 
 ## Current Argument Contract
 
-`prooflog proof` requires `--since <REF>` and supports `--repo <PATH>` and `--format text|md`.
+`prooflog proof` requires `--since <REF>` and supports `--repo <PATH>` and `--format text|md|json`.
 
 `prooflog ingest` requires `--codex`.
 
@@ -145,7 +145,7 @@ Strong relevant signals include:
 - command cwd inside the repo
 - file-change paths overlapping changed files
 
-Weak file-name-only overlap is reported as ambiguous rather than hidden. Missing or empty local storage reports zero relevant and ambiguous sessions without failing the proof flow. JSON reports are planned follow-up work.
+Weak file-name-only overlap is reported as ambiguous rather than hidden. Missing or empty local storage reports zero relevant and ambiguous sessions without failing the proof flow.
 
 ## Proof Decision
 
@@ -158,6 +158,23 @@ Current decision rules are intentionally conservative:
 - `UNKNOWN` covers missing local storage, no relevant sessions, no changed files, no relevant verification evidence, unknown-only verification evidence, ambiguous-only evidence, or ambiguous failure resolution.
 
 Decision reasons may include session ids, verification command subjects, and status summaries. They do not print command output or raw transcript text.
+
+## JSON Report
+
+`prooflog proof --format json` emits an experimental machine-readable report with `schema_version: 1`.
+
+The JSON report includes:
+
+- `scope`: repo, branch, since ref, HEAD, merge base, and dirty state
+- `changed`: changed-file counts, diff stats, docs-only state, and per-file summaries
+- `codex`: relevant and ambiguous session summaries and correlation signals
+- `verification`: safe verification fact counts and summaries
+- `failures`: safe failure-resolution counts and summaries
+- `risks`: risky changed-path and risky-command summaries
+- `decision`: READY/NOT READY/UNKNOWN status and reasons
+- `next_actions`: suggested next steps
+
+The JSON report does not include raw transcript text, raw command output, or raw diff text by default. It uses the same decision and exit-code behavior as plain text and Markdown.
 
 ## Proof Exit Codes
 

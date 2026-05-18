@@ -70,15 +70,12 @@ Work:
 
 Goal: plain text, Markdown, JSON output, deterministic reports, and useful exit codes.
 
-Work:
-
-- Implement plain text proof report.
-- Implement Markdown proof report.
-- Add `--json` machine-readable output.
-
 Implemented:
 
+- Plain text proof report.
+- Markdown proof report.
 - Useful proof exit codes.
+- Experimental machine-readable JSON output.
 
 ## 7. Privacy, Hardening, And Edge Cases
 

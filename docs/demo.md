@@ -1,6 +1,6 @@
 # Demo Script
 
-This is the target first-demo flow. `init`, `doctor`, JSONL file discovery, raw JSONL line storage, raw/message/command-output FTS indexing, session/message/command/approval/file-change derivation, verification/failure/resolution proof facts, proof-command git context plus changed-file detection, risky path and command classification, session-to-repo correlation, conservative READY/NOT READY/UNKNOWN decisions, plain text plus Markdown proof reports, and decision-based exit codes are implemented; JSON output is still planned.
+This is the target first-demo flow. `init`, `doctor`, JSONL file discovery, raw JSONL line storage, raw/message/command-output FTS indexing, session/message/command/approval/file-change derivation, verification/failure/resolution proof facts, proof-command git context plus changed-file detection, risky path and command classification, session-to-repo correlation, conservative READY/NOT READY/UNKNOWN decisions, plain text plus Markdown plus experimental JSON proof reports, and decision-based exit codes are implemented.
 
 ```bash
 cargo install --path .
@@ -14,6 +14,8 @@ prooflog ingest --codex --codex-root ~/.codex
 prooflog proof --since main
 
 prooflog proof --since main --format md > prooflog.md
+
+prooflog proof --since main --format json > prooflog.json
 ```
 
 ## Expected Doctor Output

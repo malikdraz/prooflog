@@ -87,8 +87,86 @@ fn proof_rejects_unknown_format() {
             predicate::str::contains("invalid value")
                 .and(predicate::str::contains("xml"))
                 .and(predicate::str::contains("text"))
-                .and(predicate::str::contains("md")),
+                .and(predicate::str::contains("md"))
+                .and(predicate::str::contains("json")),
         );
+}
+
+#[test]
+fn proof_json_format_is_machine_readable() {
+    let env = CliEnv::new();
+    let repo = init_git_repo(env.home.path().join("repo"));
+    fs::create_dir_all(repo.join("src").join("auth")).unwrap();
+    fs::write(
+        repo.join("src").join("auth").join("session.rs"),
+        "pub fn auth() {}\n",
+    )
+    .unwrap();
+    git(&repo, ["add", "src/auth/session.rs"]);
+    git(&repo, ["commit", "-m", "add auth"]);
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    let repo_root = repo.canonicalize().unwrap();
+    fs::write(
+        codex_root.join("json-ready.jsonl"),
+        format!(
+            "{{\"type\":\"session_meta\",\"timestamp\":\"2026-05-18T16:10:00Z\",\"session_id\":\"session-json\",\"workspace_path\":\"{}\",\"title\":\"JSON proof\"}}\n\
+             {{\"type\":\"command\",\"timestamp\":\"2026-05-18T16:10:05Z\",\"session_id\":\"session-json\",\"command\":{{\"cmd\":\"cargo test\",\"cwd\":\"{}\",\"status\":\"success\",\"exit_code\":0,\"output\":\"SECRET_JSON_OUTPUT should not print\"}}}}\n",
+            repo_root.display(),
+            repo_root.display()
+        ),
+    )
+    .unwrap();
+
+    env.command()
+        .args(["init", "--codex-root", codex_root.to_str().unwrap()])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let output = env
+        .command_in(&repo)
+        .args([
+            "proof",
+            "--since",
+            "main~1",
+            "--format",
+            "json",
+            "--db",
+            env.db_file().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("SECRET_JSON_OUTPUT"));
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report["schema_version"], 1);
+    assert_eq!(report["format"], "json");
+    assert_eq!(report["scope"]["since"], "main~1");
+    assert_eq!(report["changed"]["files_count"], 1);
+    assert_eq!(report["changed"]["files"][0]["path"], "src/auth/session.rs");
+    assert_eq!(report["codex"]["relevant_sessions_count"], 1);
+    assert_eq!(
+        report["codex"]["relevant_sessions"][0]["id"],
+        "session-json"
+    );
+    assert_eq!(report["verification"]["passed"], 1);
+    assert_eq!(report["risks"]["changed_paths"]["level"], "elevated");
+    assert_eq!(report["decision"]["status"], "READY");
+    assert_eq!(
+        report["next_actions"][0],
+        "review and paste the report where proof is needed"
+    );
 }
 
 #[test]
