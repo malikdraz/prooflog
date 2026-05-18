@@ -9,7 +9,7 @@ This repo is the ProofLog project. Implementation has started with a Rust CLI sk
 - Core command: `prooflog proof --since main`
 - Current binary commands: `init`, `doctor`, `ingest`, `proof`
 - `prooflog init` currently creates local TOML config, initializes the SQLite schema, and normalizes config/DB files to owner-only permissions on Unix-like systems.
-- `prooflog doctor` currently reads config, prints storage status, and warns on unsafe config/DB file permissions; full readiness checks are separate follow-up work.
+- `prooflog doctor` currently reads config, prints storage/Codex/git readiness status, and warns on missing Codex/git context or unsafe config/DB file permissions.
 - Local docs under `docs/` define the public project direction.
 
 Use the repo-local docs as the source of truth for public project direction unless the user gives newer requirements.

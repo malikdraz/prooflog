@@ -17,7 +17,7 @@ prooflog proof --since main
 
 On Unix-like systems, `prooflog init` sets the config and DB files to owner-readable/writable only.
 
-`prooflog doctor` reads the config file and prints resolved paths plus storage status. On Unix-like systems, it warns when config or DB file permissions are broader than owner-only.
+`prooflog doctor` reads the config file and prints resolved paths, storage status, Codex root status, Codex JSONL count, and git repo status. On Unix-like systems, it warns when config or DB file permissions are broader than owner-only.
 
 The current config stores:
 
@@ -53,7 +53,7 @@ $HOME/.codex
 
 `prooflog init` will later extend storage hardening around directories and SQLite sidecar files if needed.
 
-`prooflog doctor` will later check Codex history and git context.
+`prooflog doctor` will later add deeper parser diagnostics and richer git edge-case handling.
 
 `prooflog ingest --codex` will discover and ingest local Codex JSONL history.
 
@@ -96,3 +96,15 @@ The schema is raw-first. Later parser and ingestion work will populate it.
 On Unix-like systems, ProofLog expects config and DB files to use mode `0600`.
 
 If `prooflog doctor` finds broader permissions, it prints a warning with a `chmod 600 <path>` fix. Permission warnings do not currently make `doctor` fail.
+
+## Doctor Readiness
+
+`prooflog doctor` currently reports:
+
+- config path and resolved config values
+- SQLite open status, migration version, FTS5 availability, and journal mode
+- Codex root state and recursive `.jsonl` file count
+- current git repo root and branch when available
+- warnings for missing Codex root, no JSONL files, missing git repo, and unsafe file permissions
+
+Warnings are non-fatal. Critical config and database errors still return a non-zero exit code.

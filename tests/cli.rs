@@ -271,6 +271,48 @@ fn doctor_warns_on_unsafe_config_and_db_permissions() {
     );
 }
 
+#[test]
+fn doctor_warns_when_codex_root_or_git_repo_are_missing() {
+    let env = CliEnv::new();
+    env.command().arg("init").assert().success();
+
+    env.command_in(env.home.path())
+        .arg("doctor")
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Codex:")
+                .and(predicate::str::contains("root: missing"))
+                .and(predicate::str::contains("jsonl files: 0"))
+                .and(predicate::str::contains("Git:"))
+                .and(predicate::str::contains("repo: not detected"))
+                .and(predicate::str::contains("Warnings:"))
+                .and(predicate::str::contains("Codex root does not exist"))
+                .and(predicate::str::contains("not inside a git repo")),
+        );
+}
+
+#[test]
+fn doctor_reports_codex_jsonl_count_and_current_git_repo() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join(".codex");
+    fs::create_dir_all(codex_root.join("sessions")).unwrap();
+    fs::write(codex_root.join("session-a.jsonl"), "{}\n").unwrap();
+    fs::write(codex_root.join("sessions").join("session-b.jsonl"), "{}\n").unwrap();
+    fs::write(codex_root.join("ignore.txt"), "not jsonl").unwrap();
+
+    env.command().arg("init").assert().success();
+
+    env.command().arg("doctor").assert().success().stdout(
+        predicate::str::contains("Codex:")
+            .and(predicate::str::contains("root: ok"))
+            .and(predicate::str::contains("jsonl files: 2"))
+            .and(predicate::str::contains("Git:"))
+            .and(predicate::str::contains("repo: "))
+            .and(predicate::str::contains("branch: ")),
+    );
+}
+
 struct CliEnv {
     home: TempDir,
     config_home: TempDir,
@@ -292,6 +334,15 @@ impl CliEnv {
             .env("HOME", self.home.path())
             .env("XDG_CONFIG_HOME", self.config_home.path())
             .env("XDG_DATA_HOME", self.data_home.path());
+        if let Some(path) = std::env::var_os("PATH") {
+            cmd.env("PATH", path);
+        }
+        cmd
+    }
+
+    fn command_in(&self, cwd: impl AsRef<std::path::Path>) -> Command {
+        let mut cmd = self.command();
+        cmd.current_dir(cwd);
         cmd
     }
 

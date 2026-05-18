@@ -1,6 +1,6 @@
 # Demo Script
 
-This is the target first-demo flow. It is not implemented yet.
+This is the target first-demo flow. `init` and `doctor` are implemented; ingest and proof report generation are still planned.
 
 ```bash
 cargo install --path .
@@ -21,23 +21,30 @@ prooflog proof --since main --format md > prooflog.md
 ```text
 prooflog doctor
 
-DB:
-  path: /home/user/.local/share/prooflog/prooflog.db
+Config:
+  path: /home/user/.config/prooflog/config.toml
+  db: /home/user/.local/share/prooflog/prooflog.db
+  codex root: /home/user/.codex
+  redaction: secrets=true, local_paths=true
+
+Storage:
+  db: /home/user/.local/share/prooflog/prooflog.db
   sqlite: ok
+  migration: 1
   fts5: ok
-  permissions: owner-only
+  journal: wal
 
 Codex:
-  root: /home/user/.codex
-  jsonl files: found
+  root: ok
+  path: /home/user/.codex
+  jsonl files: 42
 
 Git:
   repo: /home/user/src/example-project
   branch: feature/example-change
-  merge base: main
 
 Status:
-  ready
+  config ok
 ```
 
 ## Expected Proof Output

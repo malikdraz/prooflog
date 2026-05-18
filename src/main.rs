@@ -3,6 +3,7 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    process::Command as ProcessCommand,
 };
 
 use anyhow::{Context, Result};
@@ -83,10 +84,16 @@ fn doctor_config(args: DoctorArgs) -> Result<()> {
         })?
         .with_overrides(args.db, args.codex_root);
     let storage = inspect_database(&config.db_path)?;
-    let warnings = permission_warnings(&paths.config_file, &config.db_path)?;
+    let codex = inspect_codex(&config.codex_root);
+    let git = inspect_git();
+    let mut warnings = permission_warnings(&paths.config_file, &config.db_path)?;
+    warnings.extend(codex.warnings.clone());
+    warnings.extend(git.warnings.clone());
 
     print_config_status("Config:", &paths.config_file, &config);
     print_storage_status(&storage);
+    print_codex_status(&codex);
+    print_git_status(&git);
     print_warnings(&warnings);
     println!("Status:");
     println!("  config ok");
@@ -111,6 +118,24 @@ fn print_storage_status(status: &StorageStatus) {
     println!("  migration: {}", status.migration_version);
     println!("  fts5: ok");
     println!("  journal: {}", status.journal_mode);
+}
+
+fn print_codex_status(status: &CodexStatus) {
+    println!("Codex:");
+    println!("  root: {}", status.root_state);
+    println!("  path: {}", status.root.display());
+    println!("  jsonl files: {}", status.jsonl_files);
+}
+
+fn print_git_status(status: &GitStatus) {
+    println!("Git:");
+    match &status.repo_root {
+        Some(repo_root) => println!("  repo: {}", repo_root.display()),
+        None => println!("  repo: not detected"),
+    }
+    if let Some(branch) = &status.branch {
+        println!("  branch: {branch}");
+    }
 }
 
 fn print_warnings(warnings: &[String]) {
@@ -140,6 +165,127 @@ struct StorageStatus {
     db_path: PathBuf,
     migration_version: i64,
     journal_mode: String,
+}
+
+#[derive(Debug)]
+struct CodexStatus {
+    root: PathBuf,
+    root_state: &'static str,
+    jsonl_files: usize,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug)]
+struct GitStatus {
+    repo_root: Option<PathBuf>,
+    branch: Option<String>,
+    warnings: Vec<String>,
+}
+
+fn inspect_codex(root: &Path) -> CodexStatus {
+    if !root.exists() {
+        return CodexStatus {
+            root: root.to_path_buf(),
+            root_state: "missing",
+            jsonl_files: 0,
+            warnings: vec![format!(
+                "Codex root does not exist: {}; run with --codex-root <path> if your history lives elsewhere",
+                root.display()
+            )],
+        };
+    }
+
+    if !root.is_dir() {
+        return CodexStatus {
+            root: root.to_path_buf(),
+            root_state: "invalid",
+            jsonl_files: 0,
+            warnings: vec![format!("Codex root is not a directory: {}", root.display())],
+        };
+    }
+
+    let mut warnings = Vec::new();
+    let jsonl_files = count_jsonl_files(root, &mut warnings);
+    if jsonl_files == 0 {
+        warnings.push(format!(
+            "No Codex JSONL files found under {}",
+            root.display()
+        ));
+    }
+
+    CodexStatus {
+        root: root.to_path_buf(),
+        root_state: "ok",
+        jsonl_files,
+        warnings,
+    }
+}
+
+fn count_jsonl_files(root: &Path, warnings: &mut Vec<String>) -> usize {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) => {
+            warnings.push(format!(
+                "Could not read Codex directory {}: {error}",
+                root.display()
+            ));
+            return 0;
+        }
+    };
+
+    let mut count = 0;
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                warnings.push(format!(
+                    "Could not read an entry under {}: {error}",
+                    root.display()
+                ));
+                continue;
+            }
+        };
+        let path = entry.path();
+        if path.is_dir() {
+            count += count_jsonl_files(&path, warnings);
+        } else if path
+            .extension()
+            .is_some_and(|extension| extension == "jsonl")
+        {
+            count += 1;
+        }
+    }
+    count
+}
+
+fn inspect_git() -> GitStatus {
+    let repo_root = run_git(["rev-parse", "--show-toplevel"]);
+    let Some(repo_root) = repo_root else {
+        return GitStatus {
+            repo_root: None,
+            branch: None,
+            warnings: vec!["not inside a git repo; git context will be unavailable".to_string()],
+        };
+    };
+
+    let branch = run_git(["branch", "--show-current"])
+        .filter(|branch| !branch.is_empty())
+        .or_else(|| run_git(["rev-parse", "--short", "HEAD"]).map(|head| format!("HEAD {head}")));
+
+    GitStatus {
+        repo_root: Some(PathBuf::from(repo_root)),
+        branch,
+        warnings: Vec::new(),
+    }
+}
+
+fn run_git<const N: usize>(args: [&str; N]) -> Option<String> {
+    let output = ProcessCommand::new("git").args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    Some(text.trim().to_string())
 }
 
 fn initialize_database(db_path: &Path) -> Result<StorageStatus> {
