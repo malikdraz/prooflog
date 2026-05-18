@@ -24,6 +24,18 @@ fn fixture_02_fail_then_pass_resolves_failed_verification() {
     assert_eq!(fixture.unresolved_failures, 0);
 }
 
+#[test]
+fn fixture_03_unresolved_failure_is_not_ready() {
+    let fixture = parse_fixture("tests/fixtures/codex/03_unresolved_failure.jsonl");
+
+    assert_eq!(fixture.sessions, 1);
+    assert_eq!(fixture.failed_verification_commands, 1);
+    assert_eq!(fixture.passing_verification_commands, 0);
+    assert_eq!(fixture.resolved_failures, 0);
+    assert_eq!(fixture.unresolved_failures, 1);
+    assert_eq!(fixture.decision(), "NOT READY");
+}
+
 #[derive(Default)]
 struct FixtureSummary {
     sessions: usize,
@@ -37,6 +49,18 @@ struct FixtureSummary {
     resolved_failures: usize,
     unresolved_failures: usize,
     open_failures: Vec<String>,
+}
+
+impl FixtureSummary {
+    fn decision(&self) -> &'static str {
+        if self.unresolved_failures > 0 {
+            "NOT READY"
+        } else if self.passing_verification_commands > 0 {
+            "READY"
+        } else {
+            "UNKNOWN"
+        }
+    }
 }
 
 fn parse_fixture(path: impl AsRef<Path>) -> FixtureSummary {
