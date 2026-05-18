@@ -1,74 +1,99 @@
 # Repository Instructions
 
-## Scope
-
-This repo is the ProofLog project. Implementation has started with a Rust CLI skeleton. Continue implementation only when the user asks for project work or a tracked task requires it.
-
-## Project Context
-
-- Core command: `prooflog proof --since main`
-- Current binary commands: `init`, `doctor`, `ingest`, `proof`
-- `prooflog init` currently creates local TOML config, initializes the SQLite schema, and normalizes config/DB files to owner-only permissions on Unix-like systems.
-- `prooflog doctor` currently reads config, prints storage/Codex/git readiness status, and warns on missing Codex/git context or unsafe config/DB file permissions. `prooflog doctor --parser` prints count-only parser diagnostics from local storage.
-- `prooflog ingest --codex` currently discovers local `.jsonl` files, skips unchanged files before content reads when stable metadata matches, records file metadata, stores non-empty raw JSONL lines with parse errors when malformed, removes stale raw rows when changed files shrink, rebuilds raw/message/command-output FTS indexes, derives session/message/command/approval/file-change rows, and classifies supported verification, failure, and failure-resolution evidence into proof facts.
-- `prooflog proof --since <REF>` currently emits plain text, Markdown, and experimental JSON reports with scope, changed files, Codex evidence, parser warning counts, verification, failures, risks, redacted report excerpts for obvious secrets, a conservative READY/NOT READY/UNKNOWN decision, why/next-step data, and decision-based exit codes.
-- Local docs under `docs/` define the public project direction.
-
-Use the repo-local docs as the source of truth for public project direction unless the user gives newer requirements.
-
 ## Product Boundary
 
-ProofLog is a local-first Rust + SQLite CLI that reads local Codex JSONL plus git state and emits proof reports for senior engineers.
+ProofLog is a local-first Rust + SQLite CLI for proof reports around agent-assisted code changes.
 
-In scope for MVP:
+The core command is:
 
-- Codex JSONL ingestion
-- Raw-first storage
-- Parser fixtures from real Codex traces
-- Git correlation
-- Verification, failure, and risk classification
-- Plain text and Markdown reports
-- Useful exit codes
-- Local privacy and redaction
+```bash
+prooflog proof --since main
+```
 
-Out of scope before the adoption test:
+Current commands are `init`, `doctor`, `ingest`, and `proof`. Default local state lives under `~/.prooflog`:
 
-- Dashboard
-- Tauri UI
-- Cloud sync
-- Multi-agent support
-- Semantic search
-- Embeddings
-- AGENTS.md generation
-- Launching or controlling Codex
+- `~/.prooflog/config.toml`
+- `~/.prooflog/prooflog.db`
 
-## Implementation Guardrails
+Keep the product focused on local session JSONL ingestion, raw-first storage, git correlation, verification/failure/risk classification, deterministic reports, useful exit codes, privacy, and redaction.
 
-- Prefer UNKNOWN over false READY.
-- Preserve raw events; derived tables are disposable.
-- Add or update fixtures before changing parser behavior.
-- Keep storage local by default.
-- Do not print secrets or raw transcript content in reports by default.
-- Every feature must improve `prooflog proof --since main`.
+Out of scope before the adoption test: dashboard, Tauri UI, cloud sync, multi-agent support, semantic search, embeddings, launching external tools, and generating this file.
 
-## Documentation Workflow
+## Implementation Rules
 
-For documentation tasks:
+- Use Rust for project code and `clap` for CLI behavior.
+- Preserve raw events; derived tables must be rebuildable.
+- Prefer `UNKNOWN` over false `READY`.
+- Add or update parser fixtures before parser behavior changes.
+- Keep storage local by default and owner-only on Unix-like systems.
+- Do not print secrets, raw transcript content, raw JSONL, raw command output, or raw local paths by default.
+- Every feature must improve `prooflog proof --since main` by making it more trustworthy, clearer, faster, or easier to adopt.
 
-- Keep product requirements in `docs/prd.md`.
-- Keep architectural decisions in `docs/architecture.md`.
-- Keep milestone and issue sequencing in `docs/roadmap.md`.
-- Keep risk handling in `docs/risks.md`.
-- Keep user-facing CLI behavior in `docs/cli.md`.
+## Tests And Checks
+
+Use focused tests first, then broaden based on risk.
+
+Required before completing implementation work:
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+cargo build --release
+```
+
+Parser changes need fixture and snapshot coverage. Report changes need deterministic snapshot or CLI integration coverage. Release automation changes need script-level tests and a release-check dry run where practical.
+
+## Release Workflow
+
+`Cargo.toml` is the canonical version source. Release tags must be stable semver with a `v` prefix, such as `v0.1.1`.
+
+Use `scripts/release.sh` for release operations:
+
+- `next patch|minor|major`
+- `prepare patch|minor|major|X.Y.Z`
+- `verify-tag`
+- `extract-notes`
+- `publish-tap`
+
+The GitHub release workflow validates the tag, extracts release notes from `CHANGELOG.md`, runs the release gate, creates the GitHub release, and publishes the Homebrew tap formula using `HOMEBREW_TAP_TOKEN`.
+
+Do not rewrite published release tags. If a public tag is wrong, ship the next patch version.
+
+## Homebrew Tap
+
+The tap repository is `malikdraz/homebrew-tap`, installed as `malikdraz/tap`.
+
+ProofLog owns the release; the tap owns the install recipe. Source-built tap formulas must not keep stale `bottle do` blocks unless bottles are intentionally produced and published.
+
+After tap publication, verify:
+
+```bash
+brew update
+brew reinstall malikdraz/tap/prooflog
+prooflog --help
+```
+
+Also run a temp-HOME `prooflog init` smoke test and confirm it creates `~/.prooflog/config.toml` and `~/.prooflog/prooflog.db`.
+
+## Documentation
+
+Keep public docs accurate and public-safe:
+
+- User-facing CLI behavior: `docs/cli.md`
+- Installation behavior: `docs/installation.md`
+- Release process: `docs/release-checklist.md`
+- Product and architecture context: `docs/prd.md`, `docs/architecture.md`, `docs/roadmap.md`, `docs/risks.md`
+
+Do not include private planning metadata, private issue IDs, raw local evidence, secrets, or unpublished implementation claims in public docs.
 
 ## Done Criteria
 
-For implementation work, a task is not done unless:
+A change is done only when:
 
-- Code compiles.
-- Tests pass.
-- Parser changes have fixture coverage.
-- Output is deterministic.
-- CLI behavior changes are documented.
+- Code compiles and required checks pass.
+- Changed behavior is tested.
+- CLI output remains deterministic.
+- Public docs and changelog are updated when user-facing behavior changes.
 - Privacy impact has been considered.
-- The change does not expand into dashboard-only behavior.
+- Release or tap changes are verified against the actual GitHub/Homebrew surfaces when applicable.

@@ -6,8 +6,14 @@ The format follows Keep a Changelog conventions, and release versions follow sem
 
 ## [Unreleased]
 
-- Keep this section for changes that have landed but are not yet released.
-- Move entries into the next versioned section before tagging.
+### Added
+
+- Semver release automation for version preparation, tag validation, changelog extraction, and Homebrew tap publication.
+
+### Changed
+
+- Release workflow now delegates version and changelog validation to the repo release script.
+- AGENTS.md now provides concise ProofLog-specific contributor guidance.
 
 ## [0.1.1] - 2026-05-19
 

@@ -142,6 +142,8 @@ cargo fmt --check
 
 Before opening a PR, scan public files for accidental private planning metadata or secrets.
 
+Release-worthy changes must update the `CHANGELOG.md` Unreleased section. The release script moves those notes into the versioned release section during release preparation.
+
 ## Recommended Public Labels
 
 Useful labels for issues and PRs:

@@ -26,21 +26,10 @@ jobs:
           rustup component add clippy rustfmt
 
       - name: Validate tag version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -eu
-          tag="${GITHUB_REF_NAME}"
-          version="${tag#v}"
-          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
-
-          if [ "$tag" = "$version" ]; then
-            echo "Release tags must start with v, for example v0.1.0." >&2
-            exit 1
-          fi
-
-          if [ "$version" != "$cargo_version" ]; then
-            echo "Tag $tag does not match Cargo.toml version $cargo_version." >&2
-            exit 1
-          fi
+          scripts/release.sh verify-tag "$GITHUB_REF_NAME"
 
       - name: Prepare git refs for integration tests
         run: |
@@ -50,31 +39,7 @@ jobs:
 
       - name: Extract changelog notes
         run: |
-          set -eu
-          version="${GITHUB_REF_NAME#v}"
-          awk -v version="$version" '
-            $0 ~ "^## \\[" version "\\]" {
-              found = 1
-              print
-              next
-            }
-            found && /^## \[/ {
-              exit
-            }
-            found {
-              print
-            }
-            END {
-              if (!found) {
-                exit 1
-              }
-            }
-          ' CHANGELOG.md > release-notes.md
-
-          if [ "$(wc -l < release-notes.md)" -lt 3 ]; then
-            echo "CHANGELOG.md entry for $version is missing release notes." >&2
-            exit 1
-          fi
+          scripts/release.sh extract-notes "$GITHUB_REF_NAME" release-notes.md
 
       - name: Check formatting
         run: cargo fmt --check
@@ -106,3 +71,10 @@ jobs:
             --verify-tag \
             --title "$GITHUB_REF_NAME" \
             --notes-file release-notes.md
+
+      - name: Update Homebrew tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          scripts/release.sh publish-tap "$GITHUB_REF_NAME"

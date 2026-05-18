@@ -86,7 +86,14 @@ This check is local-only. Release notes may summarize the result, but must not i
 
 ## 7. Version And Tag Gate
 
-Before tagging:
+Prepare releases with the repo-owned release script:
+
+```bash
+scripts/release.sh next patch
+scripts/release.sh prepare patch
+```
+
+Before tagging, confirm the prepared release:
 
 - [ ] Confirm `Cargo.toml` version is correct.
 - [ ] Add or update the matching `CHANGELOG.md` entry.
@@ -101,11 +108,11 @@ Tag only after the checks above pass:
 git tag vX.Y.Z
 ```
 
-Push the tag only after release notes and publish decisions are final. The GitHub release workflow validates the tag against `Cargo.toml`, extracts the matching changelog section, runs release checks, and creates the GitHub release.
+Push the tag only after release notes and publish decisions are final. The GitHub release workflow validates the tag with `scripts/release.sh verify-tag`, extracts the matching changelog section, runs release checks, creates the GitHub release, and updates the Homebrew tap.
 
 ## 8. Publish Gate
 
-Publishing is optional and must be explicit.
+Publishing is optional and must be explicit. GitHub release publishing and Homebrew tap publishing are automated on tag push, but only when the tag is pushed intentionally.
 
 Before publishing to a package registry:
 
@@ -114,13 +121,16 @@ Before publishing to a package registry:
 - [ ] Confirm install docs match the published artifact.
 - [ ] Confirm rollback steps are known.
 
-If package publishing is not ready, ship the source-based release only and keep `cargo install prooflog` documented as planned.
+If Homebrew tap publishing is not ready, do not push the tag. The release workflow requires `HOMEBREW_TAP_TOKEN` to update `malikdraz/homebrew-tap`.
 
 ## 9. Post-Release
 
 - [ ] Verify the public tag or release points at the intended commit.
 - [ ] Verify install instructions still work for the chosen release path.
-- [ ] Update the Homebrew tap formula with the release archive URL and sha256.
-- [ ] Run the tap checks before opening or merging tap changes.
+- [ ] Verify the Homebrew tap formula was updated with the release archive URL and sha256.
+- [ ] Run `brew update`.
+- [ ] Run `brew reinstall malikdraz/tap/prooflog`.
+- [ ] Run `prooflog --help`.
+- [ ] Run a temp-HOME `prooflog init` smoke test and confirm `~/.prooflog/config.toml` plus `~/.prooflog/prooflog.db`.
 - [ ] Record any known limitations in public release notes.
 - [ ] Create follow-up issues for release problems instead of hiding them in private notes.
