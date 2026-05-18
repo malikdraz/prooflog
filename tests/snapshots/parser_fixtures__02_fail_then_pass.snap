@@ -1,0 +1,26 @@
+---
+source: tests/parser_fixtures.rs
+expression: summary.snapshot()
+---
+sessions: 1
+user_messages: 1
+assistant_messages: 2
+commands: 2
+passing_verification_commands: 1
+failed_verification_commands: 1
+pass_proof_facts: 1
+fail_proof_facts: 1
+resolved_failures: 1
+unresolved_failures: 0
+approvals: 0
+approved_actions: 0
+sandbox_approval_events: 0
+risk_facts: 0
+friction_facts: 0
+file_changes: 0
+total_lines_added: 0
+total_lines_deleted: 0
+risky_path_facts: 0
+docs_low_risk_paths: 0
+decision: READY
+changed_paths: []

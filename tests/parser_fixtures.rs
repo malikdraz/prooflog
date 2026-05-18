@@ -1,6 +1,22 @@
 use serde_json::Value;
 use std::{fs, path::Path};
 
+const FIXTURES: &[&str] = &[
+    "01_single_success",
+    "02_fail_then_pass",
+    "03_unresolved_failure",
+    "04_approval_risk",
+    "05_file_edits_diff",
+];
+
+#[test]
+fn parser_fixture_summaries_match_snapshots() {
+    for fixture in FIXTURES {
+        let summary = parse_fixture(format!("tests/fixtures/codex/{fixture}.jsonl"));
+        insta::assert_snapshot!(*fixture, summary.snapshot());
+    }
+}
+
 #[test]
 fn fixture_01_single_success_has_expected_parser_contract() {
     let fixture = parse_fixture("tests/fixtures/codex/01_single_success.jsonl");
@@ -100,6 +116,59 @@ impl FixtureSummary {
         } else {
             "UNKNOWN"
         }
+    }
+
+    fn snapshot(&self) -> String {
+        let mut changed_paths = self.changed_paths.clone();
+        changed_paths.sort();
+        format!(
+            "\
+sessions: {sessions}
+user_messages: {user_messages}
+assistant_messages: {assistant_messages}
+commands: {commands}
+passing_verification_commands: {passing_verification_commands}
+failed_verification_commands: {failed_verification_commands}
+pass_proof_facts: {pass_proof_facts}
+fail_proof_facts: {fail_proof_facts}
+resolved_failures: {resolved_failures}
+unresolved_failures: {unresolved_failures}
+approvals: {approvals}
+approved_actions: {approved_actions}
+sandbox_approval_events: {sandbox_approval_events}
+risk_facts: {risk_facts}
+friction_facts: {friction_facts}
+file_changes: {file_changes}
+total_lines_added: {total_lines_added}
+total_lines_deleted: {total_lines_deleted}
+risky_path_facts: {risky_path_facts}
+docs_low_risk_paths: {docs_low_risk_paths}
+decision: {decision}
+changed_paths: {changed_paths:?}
+",
+            sessions = self.sessions,
+            user_messages = self.user_messages,
+            assistant_messages = self.assistant_messages,
+            commands = self.commands,
+            passing_verification_commands = self.passing_verification_commands,
+            failed_verification_commands = self.failed_verification_commands,
+            pass_proof_facts = self.pass_proof_facts,
+            fail_proof_facts = self.fail_proof_facts,
+            resolved_failures = self.resolved_failures,
+            unresolved_failures = self.unresolved_failures,
+            approvals = self.approvals,
+            approved_actions = self.approved_actions,
+            sandbox_approval_events = self.sandbox_approval_events,
+            risk_facts = self.risk_facts,
+            friction_facts = self.friction_facts,
+            file_changes = self.file_changes,
+            total_lines_added = self.total_lines_added,
+            total_lines_deleted = self.total_lines_deleted,
+            risky_path_facts = self.risky_path_facts,
+            docs_low_risk_paths = self.docs_low_risk_paths,
+            decision = self.decision(),
+            changed_paths = changed_paths,
+        )
     }
 }
 

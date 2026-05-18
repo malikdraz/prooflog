@@ -41,3 +41,17 @@ Preserve structure. Redact:
 - production hostnames
 
 Do not redact event type names, JSON keys, command shapes, timestamps, or parser-relevant nesting.
+
+## Snapshot Tests
+
+`cargo test` runs fixture summary snapshots for every fixture in `tests/fixtures/codex/`.
+
+Snapshots live under `tests/snapshots/` and intentionally cover compact parser summaries rather than raw transcript text. They currently track session/message counts, command verification counts, approval/risk facts, file-change stats, fixture decisions, and changed paths.
+
+When parser fixture behavior intentionally changes, update snapshots explicitly:
+
+```bash
+INSTA_UPDATE=always cargo test --test parser_fixtures
+```
+
+Review the snapshot diff before committing. Final proof report snapshots are planned for the report renderer work; they are not implemented yet.

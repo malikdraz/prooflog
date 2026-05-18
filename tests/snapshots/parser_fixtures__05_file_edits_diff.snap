@@ -1,0 +1,26 @@
+---
+source: tests/parser_fixtures.rs
+expression: summary.snapshot()
+---
+sessions: 1
+user_messages: 1
+assistant_messages: 1
+commands: 0
+passing_verification_commands: 0
+failed_verification_commands: 0
+pass_proof_facts: 0
+fail_proof_facts: 0
+resolved_failures: 0
+unresolved_failures: 0
+approvals: 0
+approved_actions: 0
+sandbox_approval_events: 0
+risk_facts: 0
+friction_facts: 0
+file_changes: 3
+total_lines_added: 7
+total_lines_deleted: 3
+risky_path_facts: 1
+docs_low_risk_paths: 1
+decision: UNKNOWN
+changed_paths: [".github/workflows/ci.yml", "docs/cli.md", "src/main.rs"]
