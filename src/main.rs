@@ -6,7 +6,7 @@ use std::{
     fs::{self, File},
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
-    process::Command as ProcessCommand,
+    process::{Command as ProcessCommand, ExitCode},
 };
 
 use anyhow::{Context, Result};
@@ -18,11 +18,17 @@ use sha2::{Digest, Sha256};
 use tracing::debug;
 use tracing_subscriber::EnvFilter;
 
-fn main() -> Result<()> {
+fn main() -> ExitCode {
     init_tracing();
     let cli = Cli::parse();
     debug!(command = ?cli.command, "parsed cli arguments");
-    run(cli)
+    match run(cli) {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("Error: {error:?}");
+            ExitCode::from(3)
+        }
+    }
 }
 
 fn init_tracing() {
@@ -34,15 +40,15 @@ fn init_tracing() {
         .try_init();
 }
 
-fn run(cli: Cli) -> Result<()> {
+fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
         Command::Init(args) => init_config(args)?,
         Command::Doctor(args) => doctor_config(args)?,
         Command::Ingest(args) => ingest_codex(args)?,
-        Command::Proof(args) => proof_git_context(args)?,
+        Command::Proof(args) => return proof_git_context(args),
     }
 
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
 
 fn init_config(args: InitArgs) -> Result<()> {
@@ -128,7 +134,7 @@ fn ingest_codex(args: IngestArgs) -> Result<()> {
     Ok(())
 }
 
-fn proof_git_context(args: ProofArgs) -> Result<()> {
+fn proof_git_context(args: ProofArgs) -> Result<ExitCode> {
     let since = args.since;
     let db_path = resolve_proof_db_path(args.db)?;
     let repo_path = args.repo.unwrap_or(env::current_dir().context(
@@ -156,7 +162,15 @@ fn proof_git_context(args: ProofArgs) -> Result<()> {
         ProofFormat::Text => print_plain_text_report(report),
         ProofFormat::Md => print_markdown_report(report),
     }
-    Ok(())
+    Ok(exit_code_for_decision(&decision))
+}
+
+fn exit_code_for_decision(decision: &ProofDecision) -> ExitCode {
+    match decision.status {
+        "READY" => ExitCode::SUCCESS,
+        "NOT READY" => ExitCode::from(1),
+        _ => ExitCode::from(2),
+    }
 }
 
 fn resolve_proof_db_path(db_path: Option<PathBuf>) -> Result<PathBuf> {

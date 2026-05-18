@@ -46,7 +46,7 @@ fn proof_prints_plain_text_report_sections() {
     proof
         .args(["proof", "--since", "main"])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains("PROOFLOG REPORT")
                 .and(predicate::str::contains("Scope:"))
@@ -68,7 +68,7 @@ fn proof_accepts_explicit_text_format() {
     proof
         .args(["proof", "--since", "main", "--format", "text"])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains("PROOFLOG REPORT")
                 .and(predicate::str::contains("Scope:"))
@@ -160,7 +160,7 @@ fn proof_reports_git_context_for_repo_override() {
     env.command_in(env.home.path())
         .args(["proof", "--since", "main", "--repo", repo.to_str().unwrap()])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains("Scope:")
                 .and(predicate::str::contains(format!(
@@ -182,7 +182,7 @@ fn proof_detects_git_context_from_current_directory() {
     env.command_in(&repo)
         .args(["proof", "--since", "main"])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains(format!("repo: {}", repo.canonicalize().unwrap().display()))
                 .and(predicate::str::contains("branch: main"))
@@ -197,7 +197,7 @@ fn proof_fails_outside_git_repo() {
     env.command_in(env.home.path())
         .args(["proof", "--since", "main"])
         .assert()
-        .failure()
+        .code(3)
         .stderr(
             predicate::str::contains("not a git repository")
                 .and(predicate::str::contains("--repo <PATH>")),
@@ -212,7 +212,7 @@ fn proof_fails_on_invalid_since_ref() {
     env.command_in(&repo)
         .args(["proof", "--since", "missing-ref"])
         .assert()
-        .failure()
+        .code(3)
         .stderr(
             predicate::str::contains("invalid git base ref")
                 .and(predicate::str::contains("missing-ref")),
@@ -232,7 +232,7 @@ fn proof_reports_changed_files_and_diff_stats() {
     env.command_in(&repo)
         .args(["proof", "--since", "main~1"])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains("Changed:")
                 .and(predicate::str::contains("files: 2"))
@@ -256,7 +256,7 @@ fn proof_reports_docs_only_changes() {
     env.command_in(&repo)
         .args(["proof", "--since", "main~1"])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains("Changed:")
                 .and(predicate::str::contains("files: 1"))
@@ -299,7 +299,7 @@ fn proof_reports_risky_changed_paths() {
     env.command_in(&repo)
         .args(["proof", "--since", "main~1"])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains("Risk:")
                 .and(predicate::str::contains("risk level: elevated"))
@@ -325,7 +325,7 @@ fn proof_reports_docs_only_changes_as_low_risk() {
     env.command_in(&repo)
         .args(["proof", "--since", "main~1"])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains("Risk:")
                 .and(predicate::str::contains("risk level: low"))
@@ -346,7 +346,7 @@ fn proof_reports_multiple_risk_categories_for_one_path() {
     env.command_in(&repo)
         .args(["proof", "--since", "main~1"])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains("Risk:")
                 .and(predicate::str::contains("risky files: 1"))
@@ -374,7 +374,7 @@ fn proof_reports_deleted_and_renamed_files() {
     env.command_in(&repo)
         .args(["proof", "--since", "main~1"])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains("files: 2")
                 .and(predicate::str::contains("D delete-me.txt (+0 -1)"))
@@ -486,7 +486,7 @@ fn proof_reports_ambiguous_session_overlap() {
             env.db_file().to_str().unwrap(),
         ])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains("relevant sessions: 0")
                 .and(predicate::str::contains("ambiguous sessions: 1"))
@@ -601,7 +601,7 @@ fn proof_reports_risky_commands_from_ambiguous_sessions_separately() {
             env.db_file().to_str().unwrap(),
         ])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains("Risky commands:")
                 .and(predicate::str::contains("relevant: 0"))
@@ -651,7 +651,7 @@ fn proof_excludes_unrelated_risky_commands() {
             env.db_file().to_str().unwrap(),
         ])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains("Risky commands:")
                 .and(predicate::str::contains("relevant: 0"))
@@ -829,7 +829,7 @@ fn proof_decision_not_ready_with_unresolved_relevant_failure() {
             env.db_file().to_str().unwrap(),
         ])
         .assert()
-        .success()
+        .code(1)
         .stdout(
             predicate::str::contains("Decision:")
                 .and(predicate::str::contains("status: NOT READY"))
@@ -863,7 +863,7 @@ fn proof_decision_unknown_when_db_is_missing() {
             missing_db.to_str().unwrap(),
         ])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains("Decision:")
                 .and(predicate::str::contains("status: UNKNOWN"))
@@ -917,7 +917,7 @@ fn proof_decision_unknown_without_relevant_sessions() {
             env.db_file().to_str().unwrap(),
         ])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains("Decision:")
                 .and(predicate::str::contains("status: UNKNOWN"))
@@ -972,7 +972,7 @@ fn proof_decision_unknown_without_verification_evidence() {
             env.db_file().to_str().unwrap(),
         ])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains("Decision:")
                 .and(predicate::str::contains("status: UNKNOWN"))
@@ -1026,7 +1026,7 @@ fn proof_decision_unknown_with_ambiguous_only_evidence() {
             env.db_file().to_str().unwrap(),
         ])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains("Decision:")
                 .and(predicate::str::contains("status: UNKNOWN"))
@@ -1053,7 +1053,7 @@ fn proof_handles_missing_db_for_session_correlation() {
             missing_db.to_str().unwrap(),
         ])
         .assert()
-        .success()
+        .code(2)
         .stdout(
             predicate::str::contains("Codex:")
                 .and(predicate::str::contains("relevant sessions: 0"))

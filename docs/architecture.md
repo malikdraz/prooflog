@@ -46,7 +46,7 @@ Raw events are the source of truth. Derived tables are disposable.
    - plain text report
    - Markdown report
    - deterministic output
-   - useful exit codes planned
+   - useful exit codes
 
 ## Data Model Notes
 

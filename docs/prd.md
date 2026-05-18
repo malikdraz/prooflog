@@ -34,7 +34,7 @@ As a senior engineer, before opening or reviewing an agent-assisted PR, I want a
   - `0` READY
   - `1` NOT READY
   - `2` UNKNOWN
-  - `3` parser/config error
+  - `3` runtime ProofLog error
 
 ## Non-Goals
 

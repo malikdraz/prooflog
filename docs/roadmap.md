@@ -74,8 +74,11 @@ Work:
 
 - Implement plain text proof report.
 - Implement Markdown proof report.
-- Implement exit codes.
 - Add `--json` machine-readable output.
+
+Implemented:
+
+- Useful proof exit codes.
 
 ## 7. Privacy, Hardening, And Edge Cases
 

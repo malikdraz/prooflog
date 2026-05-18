@@ -59,7 +59,7 @@ $HOME/.codex
 
 `prooflog ingest --codex` will later add additional proof facts as report needs harden.
 
-`prooflog proof --since main` will later add JSON output and final exit-code mapping.
+`prooflog proof --since main` will later add JSON output.
 
 ## Current Argument Contract
 
@@ -145,7 +145,7 @@ Strong relevant signals include:
 - command cwd inside the repo
 - file-change paths overlapping changed files
 
-Weak file-name-only overlap is reported as ambiguous rather than hidden. Missing or empty local storage reports zero relevant and ambiguous sessions without failing the proof flow. JSON reports and final decision exit codes are planned follow-up work.
+Weak file-name-only overlap is reported as ambiguous rather than hidden. Missing or empty local storage reports zero relevant and ambiguous sessions without failing the proof flow. JSON reports are planned follow-up work.
 
 ## Proof Decision
 
@@ -157,7 +157,18 @@ Current decision rules are intentionally conservative:
 - `NOT READY` means relevant evidence proves a verification failure remains unresolved.
 - `UNKNOWN` covers missing local storage, no relevant sessions, no changed files, no relevant verification evidence, unknown-only verification evidence, ambiguous-only evidence, or ambiguous failure resolution.
 
-Decision reasons may include session ids, verification command subjects, and status summaries. They do not print command output or raw transcript text. This decision section does not yet change process exit codes; exit-code behavior is planned separately.
+Decision reasons may include session ids, verification command subjects, and status summaries. They do not print command output or raw transcript text.
+
+## Proof Exit Codes
+
+`prooflog proof` maps proof decisions to process exit codes:
+
+- `0`: `READY`
+- `1`: `NOT READY`
+- `2`: `UNKNOWN`
+- `3`: runtime ProofLog errors such as invalid git refs, non-git directories, config errors, parser errors, or storage errors
+
+Clap usage errors, such as unsupported `--format` values or missing required arguments, keep clap's standard error behavior.
 
 ## SQLite Schema
 
