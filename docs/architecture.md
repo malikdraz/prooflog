@@ -26,7 +26,7 @@ Raw events are the source of truth. Derived tables are disposable.
    - rebuilds raw event FTS for diagnostics
 5. Derived extraction
    - sessions derived during ingest
-   - messages
+   - messages derived during ingest
    - commands
    - approvals
    - file changes
@@ -52,7 +52,7 @@ Raw events are the source of truth. Derived tables are disposable.
 
 ## Data Model Notes
 
-The current MVP schema initializes these tables. `codex_files` is populated by discovery, `raw_events` is populated by raw ingestion, and `sessions` is derived during ingest. The remaining derived tables are populated by later extraction work.
+The current MVP schema initializes these tables. `codex_files` is populated by discovery, `raw_events` is populated by raw ingestion, and `sessions`/`messages` are derived during ingest. The remaining derived tables are populated by later extraction work.
 
 - `codex_files`
 - `sessions`

@@ -283,7 +283,9 @@ fn discover_and_record_codex_files(conn: &mut Connection, root: &Path) -> Result
         record_raw_events(&tx, recorded_file.id, &file.path, &mut summary)?;
     }
     derive_sessions(&tx)?;
+    derive_messages(&tx)?;
     rebuild_raw_events_fts(&tx)?;
+    rebuild_messages_fts(&tx)?;
     tx.commit()
         .context("failed to record discovered Codex files")?;
 
@@ -557,6 +559,15 @@ fn rebuild_raw_events_fts(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn rebuild_messages_fts(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')",
+        [],
+    )
+    .context("failed to rebuild message FTS index")?;
+    Ok(())
+}
+
 #[derive(Debug, Default)]
 struct DerivedSession {
     codex_session_id: String,
@@ -686,6 +697,80 @@ fn upsert_session(conn: &Connection, session: &DerivedSession) -> Result<i64> {
         |row| row.get(0),
     )
     .context("failed to inspect derived session")
+}
+
+fn derive_messages(conn: &Connection) -> Result<()> {
+    conn.execute("DELETE FROM messages", [])
+        .context("failed to refresh derived messages")?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, session_id, raw_json, event_time
+             FROM raw_events
+             WHERE parse_error IS NULL
+             ORDER BY codex_file_id, line_number",
+        )
+        .context("failed to derive messages from raw events")?;
+    let mut rows = stmt
+        .query([])
+        .context("failed to derive messages from raw events")?;
+
+    while let Some(row) = rows
+        .next()
+        .context("failed to derive messages from raw events")?
+    {
+        let raw_event_id: i64 = row
+            .get(0)
+            .context("failed to derive messages from raw events")?;
+        let session_id: Option<i64> = row
+            .get(1)
+            .context("failed to derive messages from raw events")?;
+        let raw_json: String = row
+            .get(2)
+            .context("failed to derive messages from raw events")?;
+        let created_at: Option<String> = row
+            .get(3)
+            .context("failed to derive messages from raw events")?;
+        let value: Value =
+            serde_json::from_str(&raw_json).context("failed to derive messages from raw events")?;
+        let Some((role, text)) = extract_message(&value) else {
+            continue;
+        };
+
+        conn.execute(
+            "INSERT INTO messages (raw_event_id, session_id, role, text, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            (
+                raw_event_id,
+                session_id,
+                role.as_str(),
+                text.as_str(),
+                created_at.as_deref(),
+            ),
+        )
+        .context("failed to record derived message")?;
+    }
+
+    Ok(())
+}
+
+fn extract_message(value: &Value) -> Option<(String, String)> {
+    if value.get("type").and_then(Value::as_str) != Some("message") {
+        return None;
+    }
+
+    let message = value.get("message")?;
+    let role = message.get("role").and_then(Value::as_str)?;
+    if !matches!(role, "user" | "assistant") {
+        return None;
+    }
+
+    let text = message.get("content").and_then(Value::as_str)?.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    Some((role.to_owned(), text.to_owned()))
 }
 
 fn sha256_hex(text: &str) -> String {

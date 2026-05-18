@@ -752,6 +752,140 @@ fn session_derivation_allows_missing_optional_fields() {
 }
 
 #[test]
+fn ingest_derives_messages_from_raw_events() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("01_single_success.jsonl"),
+        include_str!("fixtures/codex/01_single_success.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let messages = message_rows(env.db_file());
+    assert_eq!(messages.len(), 2);
+    assert!(messages.iter().all(|message| message.raw_event_id > 0));
+    assert!(messages
+        .iter()
+        .all(|message| message.session_id == Some(messages[0].session_id.unwrap())));
+    assert_eq!(messages[0].role, "user");
+    assert_eq!(
+        messages[0].text,
+        "Add a focused test for the ProofLog ingest summary and verify it passes."
+    );
+    assert_eq!(
+        messages[0].created_at.as_deref(),
+        Some("2026-05-18T10:00:05Z")
+    );
+    assert_eq!(messages[1].role, "assistant");
+    assert_eq!(
+        messages[1].text,
+        "I added the focused ingest summary test and will run the Rust test suite."
+    );
+    assert_eq!(
+        messages[1].created_at.as_deref(),
+        Some("2026-05-18T10:00:20Z")
+    );
+}
+
+#[test]
+fn repeated_ingest_does_not_duplicate_messages() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("02_fail_then_pass.jsonl"),
+        include_str!("fixtures/codex/02_fail_then_pass.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    for _ in 0..2 {
+        env.command()
+            .args([
+                "ingest",
+                "--codex",
+                "--codex-root",
+                codex_root.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+    }
+
+    assert_eq!(message_rows(env.db_file()).len(), 3);
+}
+
+#[test]
+fn message_derivation_skips_empty_and_unknown_shapes() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("messages.jsonl"),
+        concat!(
+            "{\"type\":\"message\",\"timestamp\":\"2026-05-18T12:00:00Z\",\"message\":{\"role\":\"user\",\"content\":\"   \"}}\n",
+            "{\"type\":\"message\",\"timestamp\":\"2026-05-18T12:00:05Z\",\"message\":{\"content\":\"missing role\"}}\n",
+            "{\"type\":\"message\",\"timestamp\":\"2026-05-18T12:00:10Z\",\"message\":{\"role\":\"assistant\",\"content\":\"Visible answer\"}}\n",
+            "not json\n"
+        ),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let messages = message_rows(env.db_file());
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].role, "assistant");
+    assert_eq!(messages[0].text, "Visible answer");
+    assert!(messages[0].session_id.is_none());
+}
+
+#[test]
+fn ingest_populates_message_fts_index() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("01_single_success.jsonl"),
+        include_str!("fixtures/codex/01_single_success.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(message_fts_match_count(env.db_file(), "verify"), 1);
+}
+
+#[test]
 fn doctor_reports_missing_raw_event_fts_table() {
     let env = CliEnv::new();
     env.command().arg("init").assert().success();
@@ -971,6 +1105,14 @@ struct SessionRow {
     parse_status: String,
 }
 
+struct MessageRow {
+    raw_event_id: i64,
+    session_id: Option<i64>,
+    role: String,
+    text: String,
+    created_at: Option<String>,
+}
+
 fn codex_file_rows(db_path: impl AsRef<std::path::Path>) -> Vec<CodexFileRow> {
     let conn = Connection::open(db_path).unwrap();
     let mut stmt = conn
@@ -1040,11 +1182,44 @@ fn session_rows(db_path: impl AsRef<std::path::Path>) -> Vec<SessionRow> {
     .unwrap()
 }
 
+fn message_rows(db_path: impl AsRef<std::path::Path>) -> Vec<MessageRow> {
+    let conn = Connection::open(db_path).unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT raw_event_id, session_id, role, text, created_at
+             FROM messages
+             ORDER BY raw_event_id",
+        )
+        .unwrap();
+    stmt.query_map([], |row| {
+        Ok(MessageRow {
+            raw_event_id: row.get(0)?,
+            session_id: row.get(1)?,
+            role: row.get(2)?,
+            text: row.get(3)?,
+            created_at: row.get(4)?,
+        })
+    })
+    .unwrap()
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap()
+}
+
 fn linked_raw_event_count(db_path: impl AsRef<std::path::Path>, session_id: i64) -> i64 {
     let conn = Connection::open(db_path).unwrap();
     conn.query_row(
         "SELECT COUNT(*) FROM raw_events WHERE session_id = ?1",
         [session_id],
+        |row| row.get(0),
+    )
+    .unwrap()
+}
+
+fn message_fts_match_count(db_path: impl AsRef<std::path::Path>, query: &str) -> i64 {
+    let conn = Connection::open(db_path).unwrap();
+    conn.query_row(
+        "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?1",
+        [query],
         |row| row.get(0),
     )
     .unwrap()

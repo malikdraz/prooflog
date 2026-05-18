@@ -1,6 +1,6 @@
 # Demo Script
 
-This is the target first-demo flow. `init`, `doctor`, JSONL file discovery, raw JSONL line storage, raw event FTS indexing, and session derivation are implemented; richer derived extraction and proof report generation are still planned.
+This is the target first-demo flow. `init`, `doctor`, JSONL file discovery, raw JSONL line storage, raw/message FTS indexing, and session/message derivation are implemented; richer derived extraction and proof report generation are still planned.
 
 ```bash
 cargo install --path .
