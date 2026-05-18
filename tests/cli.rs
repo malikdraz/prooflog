@@ -1389,7 +1389,10 @@ fn verification_detector_records_failed_and_unknown_statuses() {
         .assert()
         .success();
 
-    let facts = proof_fact_rows(env.db_file());
+    let facts = proof_fact_rows(env.db_file())
+        .into_iter()
+        .filter(|fact| fact.kind == "verification")
+        .collect::<Vec<_>>();
     assert_eq!(facts.len(), 2);
     assert_eq!(facts[0].subject.as_deref(), Some("cargo test"));
     assert_eq!(facts[0].status, "failed");
@@ -1467,7 +1470,162 @@ fn repeated_ingest_does_not_duplicate_proof_facts() {
             .success();
     }
 
-    assert_eq!(proof_fact_rows(env.db_file()).len(), 2);
+    assert_eq!(proof_fact_rows(env.db_file()).len(), 3);
+}
+
+#[test]
+fn ingest_derives_failure_proof_facts_from_unresolved_fixture() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("03_unresolved_failure.jsonl"),
+        include_str!("fixtures/codex/03_unresolved_failure.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let failure_facts = proof_fact_rows(env.db_file())
+        .into_iter()
+        .filter(|fact| fact.kind == "failure")
+        .collect::<Vec<_>>();
+    assert_eq!(failure_facts.len(), 1);
+    assert!(failure_facts[0].session_id.is_some());
+    assert!(failure_facts[0].command_id.is_some());
+    assert_eq!(failure_facts[0].subject.as_deref(), Some("cargo test"));
+    assert_eq!(failure_facts[0].status, "failed");
+    assert!(failure_facts[0]
+        .reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("signal=exit-code")));
+    assert!(failure_facts[0]
+        .reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("exit_code=101")));
+}
+
+#[test]
+fn failure_detector_preserves_fail_then_pass_evidence() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("02_fail_then_pass.jsonl"),
+        include_str!("fixtures/codex/02_fail_then_pass.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let facts = proof_fact_rows(env.db_file());
+    let verification_statuses = facts
+        .iter()
+        .filter(|fact| fact.kind == "verification")
+        .map(|fact| fact.status.as_str())
+        .collect::<Vec<_>>();
+    let failure_facts = facts
+        .iter()
+        .filter(|fact| fact.kind == "failure")
+        .collect::<Vec<_>>();
+
+    assert_eq!(verification_statuses, vec!["failed", "passed"]);
+    assert_eq!(failure_facts.len(), 1);
+    assert_eq!(failure_facts[0].subject.as_deref(), Some("cargo test"));
+    assert_eq!(failure_facts[0].status, "failed");
+}
+
+#[test]
+fn failure_detector_records_output_token_failures() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("commands.jsonl"),
+        concat!(
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:00Z\",\"command\":{\"cmd\":\"custom verify\",\"output\":\"permission denied while opening config\"}}\n",
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:01Z\",\"command\":{\"cmd\":\"local check\",\"output\":\"command not found\"}}\n",
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:02Z\",\"command\":{\"cmd\":\"cargo test\",\"status\":\"success\",\"exit_code\":0,\"output\":\"test result: ok\"}}\n",
+            "{\"type\":\"command\",\"timestamp\":\"2026-05-18T12:00:03Z\",\"command\":{\"cmd\":\"aws s3 ls\",\"status\":\"success\",\"exit_code\":0,\"output\":\"ok\"}}\n"
+        ),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    env.command()
+        .args([
+            "ingest",
+            "--codex",
+            "--codex-root",
+            codex_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let failure_facts = proof_fact_rows(env.db_file())
+        .into_iter()
+        .filter(|fact| fact.kind == "failure")
+        .collect::<Vec<_>>();
+    assert_eq!(failure_facts.len(), 2);
+    assert_eq!(failure_facts[0].subject.as_deref(), Some("custom verify"));
+    assert!(failure_facts[0]
+        .reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("token=permission denied")));
+    assert_eq!(failure_facts[1].subject.as_deref(), Some("local check"));
+    assert!(failure_facts[1]
+        .reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("token=command not found")));
+}
+
+#[test]
+fn repeated_ingest_does_not_duplicate_failure_facts() {
+    let env = CliEnv::new();
+    let codex_root = env.home.path().join("codex-history");
+    fs::create_dir_all(&codex_root).unwrap();
+    fs::write(
+        codex_root.join("03_unresolved_failure.jsonl"),
+        include_str!("fixtures/codex/03_unresolved_failure.jsonl"),
+    )
+    .unwrap();
+
+    env.command().arg("init").assert().success();
+    for _ in 0..2 {
+        env.command()
+            .args([
+                "ingest",
+                "--codex",
+                "--codex-root",
+                codex_root.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+    }
+
+    let failure_count = proof_fact_rows(env.db_file())
+        .into_iter()
+        .filter(|fact| fact.kind == "failure")
+        .count();
+    assert_eq!(failure_count, 1);
 }
 
 #[test]

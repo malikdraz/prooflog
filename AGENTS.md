@@ -10,7 +10,7 @@ This repo is the ProofLog project. Implementation has started with a Rust CLI sk
 - Current binary commands: `init`, `doctor`, `ingest`, `proof`
 - `prooflog init` currently creates local TOML config, initializes the SQLite schema, and normalizes config/DB files to owner-only permissions on Unix-like systems.
 - `prooflog doctor` currently reads config, prints storage/Codex/git readiness status, and warns on missing Codex/git context or unsafe config/DB file permissions.
-- `prooflog ingest --codex` currently discovers local `.jsonl` files, records file metadata, stores non-empty raw JSONL lines with parse errors when malformed, rebuilds raw/message/command-output FTS indexes, derives session/message/command/approval/file-change rows, and classifies supported verification commands into proof facts.
+- `prooflog ingest --codex` currently discovers local `.jsonl` files, records file metadata, stores non-empty raw JSONL lines with parse errors when malformed, rebuilds raw/message/command-output FTS indexes, derives session/message/command/approval/file-change rows, and classifies supported verification and failure evidence into proof facts.
 - `prooflog proof --since <REF>` currently detects repo root, branch, HEAD, merge base, dirty status, changed files, diff stats, docs-only status, and relevant/ambiguous Codex sessions from local storage. Final proof report generation is still planned.
 - Local docs under `docs/` define the public project direction.
 

@@ -25,7 +25,7 @@ The current config stores:
 - Codex root
 - redaction defaults
 
-`prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, derives session/message/command/approval/file-change rows, and classifies supported verification commands into local proof facts.
+`prooflog ingest --codex` discovers local Codex `.jsonl` files, records file metadata, stores non-empty raw JSONL lines in SQLite, rebuilds raw/message/command-output FTS indexes, derives session/message/command/approval/file-change rows, and classifies supported verification and failure evidence into local proof facts.
 
 `prooflog proof --since main` detects the current git repository context and prints repo root, branch or detached HEAD label, current HEAD, merge base, dirty working tree status, changed files, diff stats, docs-only status, and relevant/ambiguous Codex sessions from local storage. It remains an explicit proof-report placeholder and does not produce the final proof report yet.
 
@@ -57,7 +57,7 @@ $HOME/.codex
 
 `prooflog doctor` will later add deeper parser diagnostics and richer git edge-case handling.
 
-`prooflog ingest --codex` will later add failure, risk, and resolution proof facts from stored raw lines.
+`prooflog ingest --codex` will later add risk and resolution proof facts from stored raw lines.
 
 `prooflog proof --since main` will later produce the core proof report.
 
@@ -121,7 +121,7 @@ It also creates these FTS5 tables:
 - `messages_fts`
 - `command_output_fts`
 
-The schema is raw-first. Current ingest populates `codex_files`, `raw_events`, `sessions`, `messages`, `commands`, `approvals`, `file_changes`, and verification rows in `proof_facts`; later parser work will add failure, risk, and resolution facts.
+The schema is raw-first. Current ingest populates `codex_files`, `raw_events`, `sessions`, `messages`, `commands`, `approvals`, `file_changes`, and verification/failure rows in `proof_facts`; later parser work will add risk and resolution facts.
 
 ## Codex Discovery
 
@@ -229,6 +229,18 @@ Currently recognized command families include:
 
 Each verification fact records the linked session, linked command, command subject, conservative status, and detector reason. Exit code `0` is `passed`; non-zero exit codes are `failed`; missing or ambiguous command outcomes are `unknown`. Unknown command families are not classified.
 
+## Failure Proof Facts
+
+Ingest also classifies explicit command failure evidence from derived `commands` rows and stores it in `proof_facts` with `kind = 'failure'`.
+
+Failure signals include:
+
+- non-zero exit code
+- failure-like status such as `failure`, `failed`, `fail`, or `error`
+- output tokens such as `error`, `failed`, `permission denied`, `timed out`, `no such file`, `command not found`, `sandbox`, or `network`
+
+Each failure fact records the linked session, linked command, command subject, `failed` status, and a deterministic reason that names the strongest signal. Exit code `0` and success-like statuses are treated as non-failure for this detector. Failure resolution and final READY/NOT READY/UNKNOWN decisions are planned follow-up work.
+
 ## Approval Derivation
 
 Ingest derives `approvals` rows from parseable approval events.
@@ -259,7 +271,7 @@ When available, each derived file change records:
 - lines added
 - lines deleted
 
-Missing optional file-change fields are stored as NULL. Missing paths and unknown file-change shapes are skipped instead of guessed. Ingest does not print raw diff text by default. Failure/risk classification and proof report behavior are planned follow-up work.
+Missing optional file-change fields are stored as NULL. Missing paths and unknown file-change shapes are skipped instead of guessed. Ingest does not print raw diff text by default. Risk classification and proof report behavior are planned follow-up work.
 
 ## Permission Warnings
 

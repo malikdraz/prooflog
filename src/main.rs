@@ -418,6 +418,7 @@ fn discover_and_record_codex_files(conn: &mut Connection, root: &Path) -> Result
     derive_approvals(&tx)?;
     derive_file_changes(&tx)?;
     derive_verification_facts(&tx)?;
+    derive_failure_facts(&tx)?;
     rebuild_raw_events_fts(&tx)?;
     rebuild_messages_fts(&tx)?;
     rebuild_command_output_fts(&tx)?;
@@ -1319,6 +1320,94 @@ fn verification_status(status: Option<&str>, exit_code: Option<i64>) -> &'static
         }
         _ => "unknown",
     }
+}
+
+fn derive_failure_facts(conn: &Connection) -> Result<()> {
+    conn.execute("DELETE FROM proof_facts WHERE kind = 'failure'", [])
+        .context("failed to refresh failure proof facts")?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, session_id, command, status, exit_code, output
+             FROM commands
+             ORDER BY id",
+        )
+        .context("failed to derive failure proof facts")?;
+    let mut rows = stmt
+        .query([])
+        .context("failed to derive failure proof facts")?;
+
+    while let Some(row) = rows
+        .next()
+        .context("failed to derive failure proof facts")?
+    {
+        let command_id: i64 = row.get(0).context("failed to derive failure proof facts")?;
+        let session_id: Option<i64> = row.get(1).context("failed to derive failure proof facts")?;
+        let command: String = row.get(2).context("failed to derive failure proof facts")?;
+        let status: Option<String> = row.get(3).context("failed to derive failure proof facts")?;
+        let exit_code: Option<i64> = row.get(4).context("failed to derive failure proof facts")?;
+        let output: Option<String> = row.get(5).context("failed to derive failure proof facts")?;
+
+        let Some(reason) = failure_reason(status.as_deref(), exit_code, output.as_deref()) else {
+            continue;
+        };
+
+        conn.execute(
+            "INSERT INTO proof_facts (
+                session_id,
+                command_id,
+                kind,
+                subject,
+                status,
+                reason
+             )
+             VALUES (?1, ?2, 'failure', ?3, 'failed', ?4)",
+            (session_id, command_id, command.as_str(), reason.as_str()),
+        )
+        .context("failed to record failure proof fact")?;
+    }
+
+    Ok(())
+}
+
+fn failure_reason(
+    status: Option<&str>,
+    exit_code: Option<i64>,
+    output: Option<&str>,
+) -> Option<String> {
+    match exit_code {
+        Some(0) => return None,
+        Some(code) => return Some(format!("signal=exit-code; exit_code={code}")),
+        None => {}
+    }
+
+    if let Some(status) = status {
+        let normalized = status.trim().to_ascii_lowercase();
+        if matches!(normalized.as_str(), "failure" | "failed" | "fail" | "error") {
+            return Some(format!("signal=status; status={normalized}"));
+        }
+        if matches!(normalized.as_str(), "success" | "passed" | "pass" | "ok") {
+            return None;
+        }
+    }
+
+    let output = output?.to_ascii_lowercase();
+    failure_output_token(&output).map(|token| format!("signal=output-token; token={token}"))
+}
+
+fn failure_output_token(output: &str) -> Option<&'static str> {
+    const TOKENS: &[&str] = &[
+        "permission denied",
+        "command not found",
+        "no such file",
+        "timed out",
+        "sandbox",
+        "network",
+        "failed",
+        "error",
+    ];
+
+    TOKENS.iter().copied().find(|token| output.contains(token))
 }
 
 fn sha256_hex(text: &str) -> String {
